@@ -107,13 +107,14 @@ make recover-network
 | Команда | Что делает |
 |---------|------------|
 | `make lint-tools` | golangci-lint + npm (ESLint/Prettier) |
-| `make lint` | golangci + ESLint + clippy |
+| `make lint` | golangci + ESLint |
+| `make lint-rust` | clippy (опционально; в CI — отдельный workflow по путям `desktop/src-tauri`) |
 | `make check-fmt` | проверка формата (gofmt / Prettier / rustfmt) |
 | `make fmt` | автоформат |
 | `make test` | `go test ./tests/... ./internal/...` |
 
 CI (GitHub Actions): параллельно **Lint**, **Format**, **Test** на push/PR  
-(`.github/workflows/lint.yml`, `format.yml`, `test.yml`).
+(`.github/workflows/lint.yml`, `format.yml`, `test.yml`). Clippy — `lint-rust.yml` только при изменениях Tauri.
 
 Юнит-тесты живут в корневом `tests/` (black-box по пакетам). Package-local `*_test.go` — исключение (доступ к unexported).
 

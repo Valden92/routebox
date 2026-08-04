@@ -2,9 +2,10 @@
 
 SHELL        := /bin/bash
 ROOT         := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-export PATH  := $(HOME)/.local/go/bin:$(HOME)/.cargo/bin:$(HOME)/.local/bin:$(PATH)
-
 GO           ?= go
+GOPATH_BIN   := $(shell $(GO) env GOPATH 2>/dev/null)/bin
+export PATH  := $(HOME)/.local/go/bin:$(HOME)/go/bin:$(GOPATH_BIN):$(HOME)/.cargo/bin:$(HOME)/.local/bin:$(PATH)
+
 CARGO_TARGET ?= x86_64-unknown-linux-gnu
 DAEMON       := $(ROOT)/bin/vpn-router-daemon
 SIDECAR      := $(ROOT)/desktop/src-tauri/binaries/vpn-router-daemon-$(CARGO_TARGET)
@@ -92,7 +93,7 @@ lint-tools:
 	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 	@cd $(ROOT)/desktop && npm install
 
-lint: lint-go lint-ui lint-rust
+lint: lint-go lint-ui
 
 test:
 	cd $(ROOT) && $(GO) test ./tests/... ./internal/...
@@ -104,7 +105,10 @@ lint-go:
 lint-ui:
 	cd $(ROOT)/desktop && npm run lint
 
+# Нужен stub/реальный sidecar (tauri-build проверяет externalBin).
 lint-rust:
+	@mkdir -p $(dir $(SIDECAR))
+	@test -e "$(SIDECAR)" || touch "$(SIDECAR)"
 	cd $(ROOT)/desktop/src-tauri && cargo clippy -- -W clippy::all
 
 ## Только проверка формата (без правок) — для CI
@@ -136,7 +140,8 @@ help:
 	@echo "  make desktop  — только UI"
 	@echo "  make stop     — остановить демон"
 	@echo "  make build    — собрать демон"
-	@echo "  make lint     — Go (golangci) + ESLint + clippy"
+	@echo "  make lint     — Go (golangci) + ESLint"
+	@echo "  make lint-rust — clippy (Tauri; тяжёлый, в CI отдельно по paths)"
 	@echo "  make check-fmt — проверка формата (gofmt / Prettier / rustfmt)"
 	@echo "  make fmt      — автоформат Go / Prettier+ESLint / rustfmt"
 	@echo "  make test     — go test ./tests/... ./internal/..."
