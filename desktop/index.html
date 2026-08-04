@@ -59,12 +59,21 @@
             </label>
             <label class="interval-label">
               каждые
-              <input type="number" name="refreshMinutes" id="add-refresh-minutes" min="5" max="10080" value="60" />
+              <input
+                type="number"
+                name="refreshMinutes"
+                id="add-refresh-minutes"
+                min="5"
+                max="10080"
+                value="60"
+              />
               мин.
             </label>
             <button type="submit">Добавить</button>
           </div>
-          <p class="muted sub-form-hint">Снимите галочку — обновлять подписку только кнопкой «Обновить».</p>
+          <p class="muted sub-form-hint">
+            Снимите галочку — обновлять подписку только кнопкой «Обновить».
+          </p>
         </form>
         <div id="subs-list"></div>
       </section>
@@ -74,7 +83,9 @@
           <input name="url" placeholder="Сайт для авто-проверки: web.telegram.org" required />
           <button type="submit" id="btn-auto-rule">Проверить и запомнить</button>
         </form>
-        <p class="muted">Авто-проверка выбирает первый доступный путь: обычная сеть → системный VPN → личный VPN.</p>
+        <p class="muted">
+          Авто-проверка выбирает первый доступный путь: обычная сеть → системный VPN → личный VPN.
+        </p>
 
         <form id="form-add-rule" class="inline-form">
           <input name="pattern" placeholder="Домен или *.example.com" />
@@ -86,7 +97,12 @@
           <button type="submit">Добавить правило</button>
         </form>
         <div class="rules-toolbar">
-          <input id="rules-search" type="search" placeholder="Поиск правил: telegram, yandex, ptsecurity…" autocomplete="off" />
+          <input
+            id="rules-search"
+            type="search"
+            placeholder="Поиск правил: telegram, yandex, ptsecurity…"
+            autocomplete="off"
+          />
           <span id="rules-search-status" class="muted"></span>
         </div>
         <h3>Автоматические правила</h3>
@@ -103,7 +119,7 @@
 
       <section id="tab-probe" class="panel">
         <form id="form-probe" class="inline-form">
-          <input name="url" placeholder="example.com или URL" required style="flex:2" />
+          <input name="url" placeholder="example.com или URL" required style="flex: 2" />
           <button type="submit" id="btn-probe-submit">Проверить</button>
         </form>
         <p id="probe-hint" class="muted">Проверка идёт параллельно по всем путям (до ~45 с).</p>

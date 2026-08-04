@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dzaytsev/vpn-router/internal/config"
+	"github.com/Valden92/routebox/internal/config"
 )
 
 // ConfigMode — как sing-box.json был собран.
@@ -34,7 +34,7 @@ func ValidateWrittenConfig(path string, st config.Settings) error {
 		Route struct {
 			Rules []map[string]any `json:"rules"`
 		} `json:"route"`
-		Inbounds []map[string]any `json:"inbounds"`
+		Inbounds  []map[string]any `json:"inbounds"`
 		Outbounds []struct {
 			Tag string `json:"tag"`
 		} `json:"outbounds"`

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -157,7 +158,7 @@ func parseURI(raw string) (Node, error) {
 	host := u.Hostname()
 	port := 0
 	if p := u.Port(); p != "" {
-		fmt.Sscanf(p, "%d", &port)
+		port, _ = strconv.Atoi(p)
 	}
 	name := u.Fragment
 	if name == "" {

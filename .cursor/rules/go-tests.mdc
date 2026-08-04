@@ -1,0 +1,16 @@
+---
+description: Правила для Go-тестов (корневой tests/ + редко package-local)
+globs: "{tests/**/*_test.go,**/*_test.go}"
+alwaysApply: false
+---
+
+# Go — тесты
+
+- **Основное место:** `tests/<пакет>/` в корне, black-box (`package foo_test`), импорт `internal/...`.
+- Фикстуры: `tests/<пакет>/testdata/` (без секретов и живых URI подписок).
+- Package-local `*_test.go` рядом с кодом — только если нужен доступ к неэкспортируемому (например coexist/Linux). Не плодить без нужды.
+- Хелперы: первый аргумент `t *testing.T` (или `tb testing.TB`); сразу `t.Helper()`.
+- Табличные тесты предпочтительны; имена кейсов — понятные строки.
+- Не полагаться на внешнюю сеть/реальный NM в unit-тестах.
+- Не требовать `t.Parallel()` везде (линтер смягчён).
+- Запуск: `make test` → `go test ./tests/... ./internal/...`.

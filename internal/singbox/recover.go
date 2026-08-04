@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dzaytsev/vpn-router/internal/network"
+	"github.com/Valden92/routebox/internal/network"
 )
 
 const DefaultTunIface = "tun100"

@@ -6,8 +6,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/dzaytsev/vpn-router/internal/network"
-	"github.com/dzaytsev/vpn-router/internal/subscription"
+	"github.com/Valden92/routebox/internal/network"
+	"github.com/Valden92/routebox/internal/subscription"
 )
 
 // ProbeProxyReachable проверяет, что до VPN-сервера можно достучаться с хоста (до полного туннеля).

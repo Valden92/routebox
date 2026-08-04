@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dzaytsev/vpn-router/internal/network"
-	"github.com/dzaytsev/vpn-router/internal/subscription"
+	"github.com/Valden92/routebox/internal/network"
+	"github.com/Valden92/routebox/internal/subscription"
 )
 
 type Result struct {

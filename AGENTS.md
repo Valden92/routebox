@@ -156,6 +156,7 @@ make stop              # тоже гасит sing-box
 5. **Polkit/NM:** изменения в `scripts/` требуют bump stamp в `configure-host-inner.sh`.
 6. **API version:** при ломающих изменениях API — увеличить `apiVersion` в `server.go` и типы в `desktop/src/api.ts`.
 7. Перед рефакторингом — GitNexus `impact` / `context` (см. ниже).
+8. **Линт:** `make lint-tools` один раз, затем `make lint` / `make check-fmt` / `make fmt` / `make test`. CI: `.github/workflows/{lint,format,test}.yml`. Юнит-тесты — в корневом `tests/` (black-box); package-local только при необходимости. Конфиги: `.golangci.yml`, `desktop/eslint.config.js`, `.editorconfig`.
 
 ### Где искать по задаче
 

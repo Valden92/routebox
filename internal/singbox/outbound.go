@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
-	"github.com/dzaytsev/vpn-router/internal/subscription"
+	"github.com/Valden92/routebox/internal/subscription"
 )
 
 func uriToOutbound(node subscription.Node) (map[string]any, error) {
@@ -34,11 +35,11 @@ func vlessOutbound(tag string, u *url.URL) (map[string]any, error) {
 		port = "443"
 	}
 	o := map[string]any{
-		"type":        "vless",
-		"tag":         tag,
-		"server":      u.Hostname(),
-		"server_port": atoi(port),
-		"uuid":        u.User.Username(),
+		"type":            "vless",
+		"tag":             tag,
+		"server":          u.Hostname(),
+		"server_port":     atoi(port),
+		"uuid":            u.User.Username(),
 		"packet_encoding": "xudp",
 	}
 	if flow := q.Get("flow"); flow != "" {
@@ -51,9 +52,9 @@ func vlessOutbound(tag string, u *url.URL) (map[string]any, error) {
 		}
 		if q.Get("security") == "reality" {
 			tls["reality"] = map[string]any{
-				"enabled": true,
+				"enabled":    true,
 				"public_key": q.Get("pbk"),
-				"short_id": q.Get("sid"),
+				"short_id":   q.Get("sid"),
 			}
 		}
 		if fp := q.Get("fp"); fp != "" {
@@ -114,8 +115,7 @@ func shadowsocksOutbound(tag string, u *url.URL) (map[string]any, error) {
 }
 
 func atoi(s string) int {
-	var n int
-	fmt.Sscanf(s, "%d", &n)
+	n, _ := strconv.Atoi(s)
 	return n
 }
 

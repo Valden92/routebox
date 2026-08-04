@@ -4,7 +4,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/dzaytsev/vpn-router/internal/config"
+	"github.com/Valden92/routebox/internal/config"
 )
 
 // SuggestPath returns a routing path using heuristics; user rules override elsewhere.

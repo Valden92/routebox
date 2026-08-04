@@ -1,4 +1,4 @@
-module github.com/dzaytsev/vpn-router
+module github.com/Valden92/routebox
 
 go 1.24
 

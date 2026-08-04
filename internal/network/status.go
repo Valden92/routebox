@@ -20,15 +20,15 @@ type LinkStatus struct {
 }
 
 type InternetStatus struct {
-	Up          bool        `json:"up"`
-	Interface   string      `json:"interface"`
-	PublicIP    string        `json:"publicIp,omitempty"`
-	PublicIPv6  string        `json:"publicIpv6,omitempty"`
-	DNS         []string    `json:"dns,omitempty"`
-	LatencyMs   float64     `json:"latencyMs,omitempty"`
-	Link        LinkStatus  `json:"link"`
-	LastCheck   time.Time   `json:"lastCheck"`
-	Error       string      `json:"error,omitempty"`
+	Up         bool       `json:"up"`
+	Interface  string     `json:"interface"`
+	PublicIP   string     `json:"publicIp,omitempty"`
+	PublicIPv6 string     `json:"publicIpv6,omitempty"`
+	DNS        []string   `json:"dns,omitempty"`
+	LatencyMs  float64    `json:"latencyMs,omitempty"`
+	Link       LinkStatus `json:"link"`
+	LastCheck  time.Time  `json:"lastCheck"`
+	Error      string     `json:"error,omitempty"`
 }
 
 func DefaultMainIface() string {

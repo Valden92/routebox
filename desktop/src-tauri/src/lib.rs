@@ -28,16 +28,16 @@ fn api_running() -> bool {
 }
 
 fn http_get(path: &str) -> Option<String> {
-    let mut stream = TcpStream::connect_timeout(
-        &API_ADDR.parse().ok()?,
-        Duration::from_millis(500),
-    )
-    .ok()?;
+    let mut stream =
+        TcpStream::connect_timeout(&API_ADDR.parse().ok()?, Duration::from_millis(500)).ok()?;
     stream
         .set_read_timeout(Some(Duration::from_millis(500)))
         .ok()?;
     stream
-        .write_all(format!("GET {path} HTTP/1.1\r\nHost: {API_ADDR}\r\nConnection: close\r\n\r\n").as_bytes())
+        .write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: {API_ADDR}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
         .ok()?;
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).ok()?;
@@ -82,8 +82,7 @@ fn ensure_daemon() -> Option<Child> {
     for (key, value) in std::env::vars() {
         cmd.env(key, value);
     }
-    match cmd.spawn()
-    {
+    match cmd.spawn() {
         Ok(child) => {
             for _ in 0..30 {
                 if api_version().unwrap_or(0) >= MIN_API_VERSION {
