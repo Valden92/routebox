@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VPN Router</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <h1>VPN Router</h1>
+        <span id="api-status" class="badge badge-warn">API…</span>
+      </header>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="dashboard">Обзор</button>
+        <button class="tab" data-tab="subscriptions">Подписки</button>
+        <button class="tab" data-tab="rules">Правила</button>
+        <button class="tab" data-tab="apps">Приложения</button>
+        <button class="tab" data-tab="probe">Проверка сайта</button>
+      </nav>
+
+      <section id="tab-dashboard" class="panel active">
+        <div class="cards">
+          <article class="card card-wide" id="card-router">
+            <h2>Маршрутизатор</h2>
+            <div class="card-body">Загрузка…</div>
+          </article>
+          <article class="card" id="card-internet">
+            <h2>Интернет</h2>
+            <div class="card-body">Загрузка…</div>
+          </article>
+          <article class="card" id="card-system-vpn">
+            <h2>Системный VPN</h2>
+            <div class="card-body">Загрузка…</div>
+          </article>
+          <article class="card" id="card-personal">
+            <h2>Личный VPN</h2>
+            <div class="card-body">Загрузка…</div>
+            <div class="card-actions">
+              <button type="button" id="btn-personal-on">Включить</button>
+              <button type="button" id="btn-personal-off">Выключить</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="tab-subscriptions" class="panel">
+        <div id="personal-setup-banner" class="banner hidden" role="alert"></div>
+        <form id="form-add-sub" class="sub-form">
+          <input name="name" placeholder="Название" required />
+          <input name="url" placeholder="URL подписки" required />
+          <div class="sub-form-row">
+            <label class="check-label">
+              <input type="checkbox" name="autoRefresh" id="add-auto-refresh" checked />
+              Автообновление
+            </label>
+            <label class="interval-label">
+              каждые
+              <input type="number" name="refreshMinutes" id="add-refresh-minutes" min="5" max="10080" value="60" />
+              мин.
+            </label>
+            <button type="submit">Добавить</button>
+          </div>
+          <p class="muted sub-form-hint">Снимите галочку — обновлять подписку только кнопкой «Обновить».</p>
+        </form>
+        <div id="subs-list"></div>
+      </section>
+
+      <section id="tab-rules" class="panel">
+        <form id="form-auto-rule" class="inline-form">
+          <input name="url" placeholder="Сайт для авто-проверки: web.telegram.org" required />
+          <button type="submit" id="btn-auto-rule">Проверить и запомнить</button>
+        </form>
+        <p class="muted">Авто-проверка выбирает первый доступный путь: обычная сеть → системный VPN → личный VPN.</p>
+
+        <form id="form-add-rule" class="inline-form">
+          <input name="pattern" placeholder="Домен или *.example.com" />
+          <select name="path">
+            <option value="direct">Без VPN</option>
+            <option value="work">Системный VPN</option>
+            <option value="personal">Личный VPN</option>
+          </select>
+          <button type="submit">Добавить правило</button>
+        </form>
+        <div class="rules-toolbar">
+          <input id="rules-search" type="search" placeholder="Поиск правил: telegram, yandex, ptsecurity…" autocomplete="off" />
+          <span id="rules-search-status" class="muted"></span>
+        </div>
+        <h3>Автоматические правила</h3>
+        <ul id="auto-rules-list" class="rules-list"></ul>
+        <h3>Ручные правила</h3>
+        <ul id="manual-rules-list" class="rules-list"></ul>
+      </section>
+
+      <section id="tab-apps" class="panel">
+        <h3>Приложения с сетью</h3>
+        <button id="btn-scan-apps" class="secondary">Сканировать</button>
+        <ul id="apps-list"></ul>
+      </section>
+
+      <section id="tab-probe" class="panel">
+        <form id="form-probe" class="inline-form">
+          <input name="url" placeholder="example.com или URL" required style="flex:2" />
+          <button type="submit" id="btn-probe-submit">Проверить</button>
+        </form>
+        <p id="probe-hint" class="muted">Проверка идёт параллельно по всем путям (до ~45 с).</p>
+      </section>
+    </div>
+
+    <div id="modal-overlay" class="modal-overlay" aria-hidden="true">
+      <div class="modal" role="dialog" aria-labelledby="modal-title">
+        <header class="modal-header">
+          <h2 id="modal-title">Результат проверки</h2>
+          <button type="button" id="modal-close" class="secondary" aria-label="Закрыть">×</button>
+        </header>
+        <div id="modal-body" class="modal-body"></div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status"></div>
+  </body>
+</html>

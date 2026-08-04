@@ -1,0 +1,1349 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/google/uuid"
+
+	"github.com/dzaytsev/vpn-router/internal/apps"
+	"github.com/dzaytsev/vpn-router/internal/config"
+	"github.com/dzaytsev/vpn-router/internal/network"
+	"github.com/dzaytsev/vpn-router/internal/nm"
+	"github.com/dzaytsev/vpn-router/internal/ping"
+	"github.com/dzaytsev/vpn-router/internal/probe"
+	"github.com/dzaytsev/vpn-router/internal/routing"
+	"github.com/dzaytsev/vpn-router/internal/singbox"
+	"github.com/dzaytsev/vpn-router/internal/subscription"
+)
+
+type Server struct {
+	Store         *config.Store
+	SingBox       *singbox.Manager
+	router        chi.Router
+	refresh       *refreshScheduler
+	autoMu        sync.Mutex
+	observedHosts map[string]time.Time
+}
+
+func NewServer(store *config.Store, sb *singbox.Manager) *Server {
+	s := &Server{Store: store, SingBox: sb, refresh: newRefreshScheduler(store), observedHosts: map[string]time.Time{}}
+	s.routes()
+	s.refresh.Start()
+	s.startTrafficObserver()
+	s.startSystemVPNWatcher()
+	go func() {
+		if !s.shouldStartRouterOnLaunch() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = s.ensureRouter(ctx)
+	}()
+	return s
+}
+
+func (s *Server) Handler() http.Handler { return s.router }
+
+func (s *Server) shouldStartRouterOnLaunch() bool {
+	st := s.Store.Get()
+	if !singbox.SystemVPNUp(st) {
+		return true
+	}
+	if st.PersonalVPN.Enabled && st.PersonalVPN.AutoConnect {
+		return true
+	}
+	if st.PersonalVPN.Enabled && !st.PersonalVPN.AutoConnect {
+		_ = s.Store.Update(func(cur *config.Settings) {
+			cur.PersonalVPN.Enabled = false
+		})
+	}
+	return false
+}
+
+func (s *Server) routes() {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID, middleware.RealIP, middleware.Logger, middleware.Recoverer)
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		AllowCredentials: true,
+	}))
+	r.Get("/api/health", s.health)
+	r.Get("/api/version", s.version)
+	r.Get("/api/status", s.status)
+	r.Get("/api/settings", s.getSettings)
+	r.Put("/api/settings", s.putSettings)
+	r.Post("/api/unlock", s.unlock)
+	r.Post("/api/lock", s.lock)
+	r.Route("/api/personal-vpn", func(r chi.Router) {
+		r.Get("/readiness", s.personalReadinessHandler)
+		r.Post("/connect", s.personalConnect)
+		r.Post("/disconnect", s.personalDisconnect)
+		r.Post("/reapply", s.personalReapply)
+		r.Get("/status", s.personalStatus)
+	})
+	r.Route("/api/subscriptions", func(r chi.Router) {
+		r.Get("/", s.listSubscriptions)
+		r.Post("/", s.addSubscription)
+		r.Post("/delete", s.deleteSubscriptionBody)
+		r.Post("/{id}/refresh", s.refreshSubscription)
+		r.Get("/{id}/nodes", s.listNodes)
+		r.Post("/{id}/ping", s.pingNodes)
+		r.Post("/{id}/select", s.selectNode)
+		r.Put("/{id}", s.updateSubscription)
+		r.Delete("/{id}", s.deleteSubscription)
+	})
+	r.Route("/api/rules", func(r chi.Router) {
+		r.Get("/", s.listRules)
+		r.Post("/", s.addRule)
+		r.Post("/auto-check", s.autoCheckRule)
+		r.Put("/{id}", s.updateRule)
+		r.Delete("/{id}", s.deleteRule)
+		r.Post("/suggest", s.suggestRule)
+	})
+	r.Get("/api/apps", s.listApps)
+	r.Post("/api/probe/site", s.probeSite)
+	s.router = r
+}
+
+const apiVersion = 4
+
+func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]any{
+		"apiVersion": apiVersion,
+		"features":   []string{"system-vpn-readonly", "personal-vpn-errors", "sing-box-recover", "auto-routing-observer"},
+	})
+}
+
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	st := s.Store.Get()
+	ctx := r.Context()
+	internet := network.CheckInternet(ctx, st.MainInterface)
+	sys := nm.Status(ctx, st.SystemVPN.NMConnectionID)
+	ready := s.personalReadiness()
+	personalActive := st.PersonalVPN.Enabled && ready.Configured && s.SingBox.Running()
+	personal := map[string]any{
+		"running":        personalActive,
+		"enabled":        st.PersonalVPN.Enabled,
+		"routingRunning": s.SingBox.Running(),
+		"configured":     ready.Configured,
+		"subscriptionId": st.PersonalVPN.ActiveSubscriptionID,
+		"message":        ready.Message,
+	}
+	if sub := activeSubscription(st); sub != nil {
+		personal["subscriptionName"] = sub.Name
+		if sub.SelectedNodeID != "" {
+			personal["selectedNodeId"] = sub.SelectedNodeID
+		}
+	}
+	if err := s.SingBox.LastError(); err != "" && !s.SingBox.Running() {
+		personal["error"] = err
+	}
+	personal["singBoxPath"] = singbox.ResolveBin(st.SingBoxPath)
+	personal["tunCapable"] = singbox.HasTUNCapability(st.SingBoxPath)
+	personal["hostConfigured"] = singbox.HostReady(st.SingBoxPath)
+	personal["systemVpnActive"] = singbox.SystemVPNUp(st)
+	personal["configMode"] = singbox.ConfigModeFor(st)
+	fileMode := singbox.ConfigFileMode(st.SingBoxConfigPath)
+	personal["configFileMode"] = fileMode
+	wantMode := singbox.ConfigModeFor(st)
+	personal["configStale"] = s.SingBox.Running() && fileMode != "" && fileMode != wantMode
+	writeJSON(w, map[string]any{
+		"internet":    internet,
+		"systemVpn":   sys,
+		"personalVpn": personal,
+		"timestamp":   time.Now(),
+	})
+}
+
+func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.Store.Get())
+}
+
+func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	var st config.Settings
+	if err := json.NewDecoder(r.Body).Decode(&st); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	err := s.Store.Update(func(cur *config.Settings) {
+		if st.MainInterface != "" {
+			cur.MainInterface = st.MainInterface
+		}
+		if st.SystemVPN.NMConnectionID != "" {
+			cur.SystemVPN = st.SystemVPN
+		}
+		cur.PersonalVPN = st.PersonalVPN
+		cur.DefaultPath = st.DefaultPath
+		cur.AutoDetectRouting = st.AutoDetectRouting
+		cur.DomainRules = st.DomainRules
+		cur.AppRules = st.AppRules
+		cur.Subscriptions = st.Subscriptions
+	})
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, s.Store.Get())
+}
+
+type unlockReq struct {
+	Passphrase string `json:"passphrase"`
+}
+
+func (s *Server) unlock(w http.ResponseWriter, r *http.Request) {
+	var req unlockReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if err := s.Store.Unlock(req.Passphrase); err != nil {
+		http.Error(w, err.Error(), 401)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "unlocked"})
+}
+
+func (s *Server) lock(w http.ResponseWriter, r *http.Request) {
+	var req unlockReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if err := s.Store.Lock(req.Passphrase); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "locked"})
+}
+
+func (s *Server) personalConnect(w http.ResponseWriter, r *http.Request) {
+	ready := s.personalReadiness()
+	if !ready.Configured {
+		writeJSONError(w, http.StatusConflict, ready.Reason, ready.Message)
+		return
+	}
+	st := s.Store.Get()
+	if !singbox.HostReady(st.SingBoxPath) {
+		writeJSONError(w, http.StatusPreconditionFailed, "host_not_ready",
+			"Выполните в терминале: make sync (настройка TUN и NetworkManager)")
+		return
+	}
+	node, err := s.selectedNode(st)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_config", err.Error())
+		return
+	}
+	if err := singbox.ProbeProxyReachable(node, st.MainInterface); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := s.Store.Update(func(st *config.Settings) {
+		st.PersonalVPN.Enabled = true
+	}); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	st = s.Store.Get()
+	if err := s.ensureRouter(r.Context()); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, map[string]any{"running": true, "node": node, "configMode": singbox.ConfigModeFor(st)})
+}
+
+func (s *Server) personalReapply(w http.ResponseWriter, r *http.Request) {
+	st := s.Store.Get()
+	if err := s.ensureRouter(r.Context()); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, map[string]any{"status": "reapplied", "configMode": singbox.ConfigModeFor(st)})
+}
+
+func (s *Server) startPersonalVPN(ctx context.Context, st config.Settings, node subscription.Node) error {
+	st.PersonalVPN.Enabled = true
+	if err := singbox.ProbeProxyReachable(node, st.MainInterface); err != nil {
+		return err
+	}
+	return s.ensureRouter(ctx)
+}
+
+func (s *Server) ensureRouter(ctx context.Context) error {
+	s.autoMu.Lock()
+	defer s.autoMu.Unlock()
+	return s.ensureRouterLocked(ctx)
+}
+
+func (s *Server) ensureRouterLocked(ctx context.Context) error {
+	st := s.Store.Get()
+	if !singbox.HostReady(st.SingBoxPath) {
+		return fmt.Errorf("host_not_ready: выполните make sync")
+	}
+	var node *subscription.Node
+	if n, err := s.selectedNode(st); err == nil {
+		node = &n
+	}
+	stoppedForReconfigure := false
+	if s.SingBox.Running() {
+		_ = s.SingBox.Stop()
+		stoppedForReconfigure = true
+	}
+	if err := singbox.WriteRouterConfig(st.SingBoxConfigPath, node, st, "tun100"); err != nil {
+		if stoppedForReconfigure {
+			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
+		}
+		return err
+	}
+	if err := singbox.ValidateWrittenConfig(st.SingBoxConfigPath, st); err != nil {
+		if stoppedForReconfigure {
+			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
+		}
+		return err
+	}
+	singbox.SnapshotWorkVPNRoutes(singbox.SystemTunIface(st))
+	if err := s.SingBox.Start(ctx); err != nil {
+		singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
+		return err
+	}
+	if !s.SingBox.Running() {
+		singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
+		msg := s.SingBox.LastError()
+		if msg == "" {
+			msg = "sing-box не запустился"
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
+func (s *Server) personalDisconnect(w http.ResponseWriter, r *http.Request) {
+	if err := s.Store.Update(func(st *config.Settings) {
+		st.PersonalVPN.Enabled = false
+	}); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	st := s.Store.Get()
+	if singbox.SystemVPNUp(st) && s.SingBox.Running() {
+		writeJSON(w, map[string]string{"status": "personal_disabled_deferred"})
+		return
+	}
+	if err := s.ensureRouter(r.Context()); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "personal_disabled"})
+}
+
+func (s *Server) personalStatus(w http.ResponseWriter, _ *http.Request) {
+	st := s.Store.Get()
+	ready := s.personalReadiness()
+	personalActive := st.PersonalVPN.Enabled && ready.Configured && s.SingBox.Running()
+	writeJSON(w, map[string]any{
+		"running":         personalActive,
+		"enabled":         st.PersonalVPN.Enabled,
+		"routingRunning":  s.SingBox.Running(),
+		"configured":      ready.Configured,
+		"reason":          ready.Reason,
+		"message":         ready.Message,
+		"error":           s.SingBox.LastError(),
+		"tunCapable":      singbox.HasTUNCapability(st.SingBoxPath),
+		"hostConfigured":  singbox.HostReady(st.SingBoxPath),
+		"systemVpnActive": singbox.SystemVPNUp(st),
+		"configMode":      singbox.ConfigModeFor(st),
+		"configFileMode":  singbox.ConfigFileMode(st.SingBoxConfigPath),
+		"configStale":     s.SingBox.Running() && singbox.ConfigFileMode(st.SingBoxConfigPath) != singbox.ConfigModeFor(st),
+	})
+}
+
+func (s *Server) listSubscriptions(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.Store.Get().Subscriptions)
+}
+
+type addSubReq struct {
+	Name            string `json:"name"`
+	URL             string `json:"url"`
+	RefreshInterval int    `json:"refreshIntervalMinutes"`
+	AutoRefresh     bool   `json:"autoRefresh"`
+}
+
+func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
+	var req addSubReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	id := uuid.NewString()
+	mins := 60
+	if req.RefreshInterval > 0 {
+		mins = req.RefreshInterval
+	}
+	if !req.AutoRefresh {
+		mins = 0
+	}
+	sub := config.Subscription{
+		ID:                     id,
+		Name:                   req.Name,
+		URL:                    req.URL,
+		RefreshIntervalMinutes: mins,
+		AutoRefresh:            req.AutoRefresh,
+		Enabled:                true,
+	}
+	_ = s.Store.Update(func(st *config.Settings) {
+		st.Subscriptions = append(st.Subscriptions, sub)
+	})
+	ctx := r.Context()
+	body, err := subscription.Fetch(ctx, req.URL)
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	nodes, err := subscription.ParseBody(body)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	nodes = subscription.FilterValidNodes(nodes)
+	if len(nodes) == 0 {
+		http.Error(w, "в подписке не найдено серверов (vless/vmess/…)", 400)
+		return
+	}
+	st := s.Store.Get()
+	_ = subscription.SaveCache(st.DataDir, id, nodes)
+	writeJSON(w, sub)
+}
+
+func (s *Server) refreshSubscription(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	st := s.Store.Get()
+	var sub *config.Subscription
+	for i := range st.Subscriptions {
+		if st.Subscriptions[i].ID == id {
+			sub = &st.Subscriptions[i]
+			break
+		}
+	}
+	if sub == nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+	body, err := subscription.Fetch(r.Context(), sub.URL)
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	nodes, err := subscription.ParseBody(body)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	nodes = subscription.FilterValidNodes(nodes)
+	if len(nodes) == 0 {
+		http.Error(w, "в подписке не найдено серверов", 400)
+		return
+	}
+	_ = subscription.SaveCache(st.DataDir, id, nodes)
+	_ = s.Store.Update(func(cur *config.Settings) {
+		for i := range cur.Subscriptions {
+			if cur.Subscriptions[i].ID == id {
+				cur.Subscriptions[i].LastRefresh = time.Now()
+			}
+		}
+	})
+	writeJSON(w, map[string]any{"count": len(nodes), "fetchedAt": time.Now()})
+}
+
+func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	st := s.Store.Get()
+	nodes, err := s.loadNodes(r, id, st)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	writeJSON(w, nodes)
+}
+
+func (s *Server) loadNodes(r *http.Request, id string, st config.Settings) ([]subscription.Node, error) {
+	c, err := subscription.LoadCache(st.DataDir, id)
+	if err == nil && len(c.Nodes) > 0 {
+		valid := subscription.FilterValidNodes(c.Nodes)
+		if len(valid) > 0 {
+			return valid, nil
+		}
+		// битый кэш (например HTML вместо подписки) — перекачаем
+	}
+	var sub *config.Subscription
+	for i := range st.Subscriptions {
+		if st.Subscriptions[i].ID == id {
+			sub = &st.Subscriptions[i]
+			break
+		}
+	}
+	if sub == nil {
+		return nil, os.ErrNotExist
+	}
+	body, err := subscription.Fetch(r.Context(), sub.URL)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := subscription.ParseBody(body)
+	if err != nil {
+		return nil, err
+	}
+	nodes = subscription.FilterValidNodes(nodes)
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("в подписке не найдено серверов")
+	}
+	_ = subscription.SaveCache(st.DataDir, id, nodes)
+	return nodes, nil
+}
+
+type updateSubReq struct {
+	AutoRefresh            *bool `json:"autoRefresh"`
+	RefreshIntervalMinutes *int  `json:"refreshIntervalMinutes"`
+}
+
+func (s *Server) updateSubscription(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req updateSubReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	err := s.Store.Update(func(st *config.Settings) {
+		for i := range st.Subscriptions {
+			if st.Subscriptions[i].ID != id {
+				continue
+			}
+			if req.AutoRefresh != nil {
+				st.Subscriptions[i].AutoRefresh = *req.AutoRefresh
+				if !*req.AutoRefresh {
+					st.Subscriptions[i].RefreshIntervalMinutes = 0
+				}
+			}
+			if req.RefreshIntervalMinutes != nil {
+				st.Subscriptions[i].RefreshIntervalMinutes = *req.RefreshIntervalMinutes
+			}
+			if st.Subscriptions[i].AutoRefresh && st.Subscriptions[i].RefreshIntervalMinutes <= 0 {
+				st.Subscriptions[i].RefreshIntervalMinutes = 60
+			}
+		}
+	})
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	for _, sub := range s.Store.Get().Subscriptions {
+		if sub.ID == id {
+			writeJSON(w, sub)
+			return
+		}
+	}
+	http.Error(w, "not found", 404)
+}
+
+type deleteSubBodyReq struct {
+	ID string `json:"id"`
+}
+
+func (s *Server) deleteSubscriptionBody(w http.ResponseWriter, r *http.Request) {
+	var req deleteSubBodyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+		http.Error(w, "id required", 400)
+		return
+	}
+	s.deleteSubscriptionID(w, req.ID)
+}
+
+func (s *Server) deleteSubscription(w http.ResponseWriter, r *http.Request) {
+	s.deleteSubscriptionID(w, chi.URLParam(r, "id"))
+}
+
+func (s *Server) deleteSubscriptionID(w http.ResponseWriter, id string) {
+	st := s.Store.Get()
+	found := false
+	err := s.Store.Update(func(cur *config.Settings) {
+		var kept []config.Subscription
+		for _, sub := range cur.Subscriptions {
+			if sub.ID == id {
+				found = true
+				continue
+			}
+			kept = append(kept, sub)
+		}
+		cur.Subscriptions = kept
+		if cur.PersonalVPN.ActiveSubscriptionID == id {
+			cur.PersonalVPN.ActiveSubscriptionID = ""
+		}
+	})
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if !found {
+		http.Error(w, "subscription not found", 404)
+		return
+	}
+	_ = subscription.DeleteCache(st.DataDir, id)
+	if s.SingBox.Running() {
+		_ = s.SingBox.Stop()
+		singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
+	}
+	writeJSON(w, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) pingNodes(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	st := s.Store.Get()
+	c, err := subscription.LoadCache(st.DataDir, id)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	results := ping.TCPBatch(r.Context(), st.MainInterface, c.Nodes, 24)
+	writeJSON(w, results)
+}
+
+type selectReq struct {
+	NodeID string `json:"nodeId"`
+}
+
+func (s *Server) selectNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req selectReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	_ = s.Store.Update(func(st *config.Settings) {
+		for i := range st.Subscriptions {
+			if st.Subscriptions[i].ID == id {
+				st.Subscriptions[i].SelectedNodeID = req.NodeID
+				if st.Subscriptions[i].NodeSelectCounts == nil {
+					st.Subscriptions[i].NodeSelectCounts = make(map[string]int)
+				}
+				st.Subscriptions[i].NodeSelectCounts[req.NodeID]++
+			}
+		}
+		st.PersonalVPN.ActiveSubscriptionID = id
+	})
+	writeJSON(w, map[string]string{"status": "selected"})
+}
+
+func (s *Server) selectedNode(st config.Settings) (subscription.Node, error) {
+	id := st.PersonalVPN.ActiveSubscriptionID
+	if id == "" {
+		return subscription.Node{}, os.ErrInvalid
+	}
+	var sub config.Subscription
+	for _, x := range st.Subscriptions {
+		if x.ID == id {
+			sub = x
+			break
+		}
+	}
+	c, err := subscription.LoadCache(st.DataDir, id)
+	if err != nil {
+		return subscription.Node{}, err
+	}
+	for _, n := range c.Nodes {
+		if n.ID == sub.SelectedNodeID {
+			return n, nil
+		}
+	}
+	if len(c.Nodes) > 0 {
+		return c.Nodes[0], nil
+	}
+	return subscription.Node{}, os.ErrNotExist
+}
+
+func (s *Server) listRules(w http.ResponseWriter, _ *http.Request) {
+	st := s.Store.Get()
+	domains := st.DomainRules
+	if domains == nil {
+		domains = []config.DomainRule{}
+	}
+	apps := st.AppRules
+	if apps == nil {
+		apps = []config.AppRule{}
+	}
+	writeJSON(w, map[string]any{"domains": domains, "apps": apps})
+}
+
+type addRuleReq struct {
+	Pattern     string           `json:"pattern"`
+	Path        config.RoutePath `json:"path"`
+	ProcessName string           `json:"processName,omitempty"`
+}
+
+func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
+	var req addRuleReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	id := uuid.NewString()
+	_ = s.Store.Update(func(st *config.Settings) {
+		if req.ProcessName != "" {
+			st.AppRules = append(st.AppRules, config.AppRule{
+				ID: id, ProcessName: req.ProcessName, Path: req.Path, Enabled: true,
+			})
+		} else {
+			pattern := normalizeRulePattern(req.Pattern)
+			if pattern == "" {
+				pattern = req.Pattern
+			}
+			st.DomainRules = append(st.DomainRules, config.DomainRule{
+				ID: id, Pattern: pattern, Path: req.Path, Source: "manual", Enabled: true, CreatedAt: time.Now(),
+			})
+		}
+	})
+	writeJSON(w, map[string]string{"id": id})
+}
+
+type updateRuleReq struct {
+	Pattern string           `json:"pattern,omitempty"`
+	Path    config.RoutePath `json:"path,omitempty"`
+	Enabled *bool            `json:"enabled,omitempty"`
+}
+
+func (s *Server) updateRule(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req updateRuleReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	var updated bool
+	err := s.Store.Update(func(st *config.Settings) {
+		for i := range st.DomainRules {
+			if st.DomainRules[i].ID != id {
+				continue
+			}
+			if req.Pattern != "" {
+				st.DomainRules[i].Pattern = normalizeRulePattern(req.Pattern)
+			}
+			if req.Path != "" {
+				st.DomainRules[i].Path = req.Path
+				st.DomainRules[i].Source = "manual"
+			}
+			if req.Enabled != nil {
+				st.DomainRules[i].Enabled = *req.Enabled
+			}
+			updated = true
+			return
+		}
+		for i := range st.AppRules {
+			if st.AppRules[i].ID != id {
+				continue
+			}
+			if req.Path != "" {
+				st.AppRules[i].Path = req.Path
+			}
+			if req.Enabled != nil {
+				st.AppRules[i].Enabled = *req.Enabled
+			}
+			updated = true
+			return
+		}
+	})
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if !updated {
+		http.Error(w, "rule not found", 404)
+		return
+	}
+	if reapplied, err := s.reapplyPersonalIfRunning(r.Context()); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "reapply_failed", err.Error())
+		return
+	} else {
+		writeJSON(w, map[string]any{"status": "updated", "reapplied": reapplied})
+	}
+}
+
+func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	_ = s.Store.Update(func(st *config.Settings) {
+		st.DomainRules = filterDomainRules(st.DomainRules, id)
+		st.AppRules = filterAppRules(st.AppRules, id)
+	})
+	writeJSON(w, map[string]string{"status": "deleted"})
+}
+
+type suggestReq struct {
+	Host string `json:"host"`
+}
+
+type autoCheckReq struct {
+	URL string `json:"url"`
+}
+
+type autoCheckResp struct {
+	Host          string            `json:"host"`
+	Rule          config.DomainRule `json:"rule,omitempty"`
+	Report        probe.SiteReport  `json:"report"`
+	Changed       bool              `json:"changed"`
+	Reapplied     bool              `json:"reapplied"`
+	SuggestedPath config.RoutePath  `json:"suggestedPath,omitempty"`
+	Message       string            `json:"message,omitempty"`
+}
+
+func (s *Server) autoCheckRule(w http.ResponseWriter, r *http.Request) {
+	var req autoCheckReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	resp, err := s.autoLearnHost(r.Context(), req.URL, true)
+	if err != nil {
+		if err == errEmptyHost {
+			http.Error(w, "empty host", 400)
+			return
+		}
+		if strings.Contains(err.Error(), "reapply") {
+			writeJSONError(w, http.StatusInternalServerError, "reapply_failed", err.Error())
+			return
+		}
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, resp)
+}
+
+func (s *Server) suggestRule(w http.ResponseWriter, r *http.Request) {
+	var req suggestReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	st := s.Store.Get()
+	sys := nm.Status(r.Context(), st.SystemVPN.NMConnectionID)
+	path := routing.SuggestPath(req.Host, sys.Routes, routing.DefaultCorpSuffixes())
+	writeJSON(w, map[string]any{"host": req.Host, "suggestedPath": path})
+}
+
+func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
+	list, err := apps.Scan(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, list)
+}
+
+type probeReq struct {
+	URL string `json:"url"`
+}
+
+func (s *Server) probeSite(w http.ResponseWriter, r *http.Request) {
+	var req probeReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	writeJSON(w, s.checkSiteReport(r.Context(), req.URL))
+}
+
+func (s *Server) checkSiteReport(ctx context.Context, rawURL string) probe.SiteReport {
+	st := s.Store.Get()
+	sys := nm.Status(ctx, st.SystemVPN.NMConnectionID)
+	sysIface := sys.Interface
+	if sysIface == "" {
+		sysIface = "tun0"
+	}
+	skip := map[config.RoutePath]string{}
+	if !sys.Connected {
+		skip[config.RouteWork] = "Системный VPN выключен"
+	}
+	if !s.SingBox.Running() || !st.PersonalVPN.Enabled {
+		skip[config.RoutePersonal] = "Личный VPN выключен"
+	}
+	bind := probe.BindMap(st.MainInterface, sysIface, singbox.PersonalProbeProxyURL)
+	return probe.CheckSite(ctx, rawURL, probe.DefaultPaths(), bind, skip)
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (s *Server) reapplyPersonalIfRunning(ctx context.Context) (bool, error) {
+	if !s.SingBox.Running() {
+		return false, nil
+	}
+	return true, s.ensureRouter(ctx)
+}
+
+var errEmptyHost = errors.New("empty host")
+
+func (s *Server) autoLearnHost(ctx context.Context, raw string, allowReapply bool) (autoCheckResp, error) {
+	host := normalizeRulePattern(raw)
+	if host == "" {
+		return autoCheckResp{}, errEmptyHost
+	}
+	report := s.checkSiteReport(ctx, host)
+	best, hasBest := bestAvailablePath(report)
+	now := time.Now()
+	resp := autoCheckResp{Host: host, Report: report}
+	if hasBest {
+		resp.SuggestedPath = best
+	}
+
+	var routeChanged bool
+	var reapplyNeeded bool
+	var rule config.DomainRule
+	var ruleFound bool
+	err := s.Store.Update(func(cur *config.Settings) {
+		idx := findDomainRuleIndex(cur.DomainRules, host)
+		if idx >= 0 {
+			ruleFound = true
+			cur.DomainRules[idx].LastCheckedAt = now
+			cur.DomainRules[idx].CheckCount++
+			current := resultForPath(report, cur.DomainRules[idx].Path)
+			switch {
+			case current != nil && current.Skipped:
+				cur.DomainRules[idx].LastError = current.SkipReason
+			case current != nil && current.Available:
+				cur.DomainRules[idx].LastSuccessAt = now
+				cur.DomainRules[idx].LastError = ""
+			case cur.DomainRules[idx].Source != "auto":
+				if current != nil && current.Error != "" {
+					cur.DomainRules[idx].LastError = current.Error
+				} else {
+					cur.DomainRules[idx].LastError = "ручное правило не сработало"
+				}
+			case hasBest:
+				oldPath := cur.DomainRules[idx].Path
+				if oldPath != best {
+					cur.DomainRules[idx].Path = best
+					routeChanged = true
+					reapplyNeeded = oldPath != config.RouteDirect || best != config.RouteDirect
+				}
+				cur.DomainRules[idx].LastSuccessAt = now
+				cur.DomainRules[idx].LastError = ""
+			default:
+				cur.DomainRules[idx].LastError = "домен недоступен по доступным путям"
+			}
+			rule = cur.DomainRules[idx]
+			return
+		}
+		if !hasBest {
+			return
+		}
+		ruleFound = true
+		routeChanged = true
+		reapplyNeeded = best != config.RouteDirect
+		rule = config.DomainRule{
+			ID:            uuid.NewString(),
+			Pattern:       host,
+			Path:          best,
+			Source:        "auto",
+			Enabled:       true,
+			CreatedAt:     now,
+			LastCheckedAt: now,
+			LastSuccessAt: now,
+			CheckCount:    1,
+		}
+		cur.DomainRules = append(cur.DomainRules, rule)
+	})
+	if err != nil {
+		return resp, err
+	}
+	resp.Rule = rule
+	resp.Changed = routeChanged
+	if !ruleFound {
+		resp.Message = "Домен недоступен по доступным сейчас путям"
+		return resp, nil
+	}
+	if reapplyNeeded && allowReapply {
+		reapplied, err := s.reapplyPersonalIfRunning(ctx)
+		if err != nil {
+			return resp, fmt.Errorf("reapply failed: %w", err)
+		}
+		resp.Reapplied = reapplied
+	}
+	return resp, nil
+}
+
+func (s *Server) passiveLearnWorkHost(raw string) (bool, error) {
+	host := normalizeRulePattern(raw)
+	if host == "" {
+		return false, errEmptyHost
+	}
+	now := time.Now()
+	changed := false
+	err := s.Store.Update(func(cur *config.Settings) {
+		idx := findDomainRuleIndex(cur.DomainRules, host)
+		if idx >= 0 {
+			r := &cur.DomainRules[idx]
+			if r.Source != "auto" {
+				return
+			}
+			r.LastCheckedAt = now
+			r.LastSuccessAt = now
+			r.LastError = ""
+			r.CheckCount++
+			if r.Path != config.RouteWork {
+				r.Path = config.RouteWork
+				changed = true
+			}
+			return
+		}
+		cur.DomainRules = append(cur.DomainRules, config.DomainRule{
+			ID:            uuid.NewString(),
+			Pattern:       host,
+			Path:          config.RouteWork,
+			Source:        "auto",
+			Enabled:       true,
+			CreatedAt:     now,
+			LastCheckedAt: now,
+			LastSuccessAt: now,
+			CheckCount:    1,
+		})
+		changed = true
+	})
+	return changed, err
+}
+
+func isCorpHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	for _, suffix := range routing.DefaultCorpSuffixes() {
+		if suffix != "" && strings.HasSuffix(host, strings.ToLower(suffix)) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeRulePattern(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "*.") {
+		return raw
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	host := u.Hostname()
+	if host == "" {
+		host = strings.TrimPrefix(strings.TrimPrefix(raw, "https://"), "http://")
+		if i := strings.IndexAny(host, "/:"); i >= 0 {
+			host = host[:i]
+		}
+	}
+	return strings.TrimSpace(host)
+}
+
+func findDomainRuleIndex(rules []config.DomainRule, host string) int {
+	host = strings.ToLower(strings.TrimSpace(host))
+	for i, r := range rules {
+		pattern := strings.ToLower(strings.TrimSpace(r.Pattern))
+		if pattern == host {
+			return i
+		}
+		if strings.HasPrefix(pattern, "*.") && strings.HasSuffix(host, strings.TrimPrefix(pattern, "*")) {
+			return i
+		}
+	}
+	return -1
+}
+
+func resultForPath(report probe.SiteReport, path config.RoutePath) *probe.PathResult {
+	for i := range report.Results {
+		if report.Results[i].Path == path {
+			return &report.Results[i]
+		}
+	}
+	return nil
+}
+
+func bestAvailablePath(report probe.SiteReport) (config.RoutePath, bool) {
+	for _, path := range probe.DefaultPaths() {
+		r := resultForPath(report, path)
+		if r != nil && r.Available {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+type clashConnectionsResp struct {
+	Connections []struct {
+		Metadata struct {
+			Host          string `json:"host"`
+			DestinationIP string `json:"destinationIP"`
+		} `json:"metadata"`
+	} `json:"connections"`
+}
+
+func (s *Server) startTrafficObserver() {
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.observeTraffic()
+		}
+	}()
+}
+
+func (s *Server) startSystemVPNWatcher() {
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.reapplyIfConfigModeChanged()
+		}
+	}()
+}
+
+func (s *Server) reapplyIfConfigModeChanged() {
+	if !s.SingBox.Running() {
+		return
+	}
+	st := s.Store.Get()
+	wantMode := singbox.ConfigModeFor(st)
+	fileMode := singbox.ConfigFileMode(st.SingBoxConfigPath)
+	if fileMode == "" || fileMode == wantMode {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_ = s.ensureRouter(ctx)
+}
+
+func (s *Server) observeTraffic() {
+	if !s.SingBox.Running() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	hosts, err := observedSingBoxHosts(ctx)
+	cancel()
+	if err != nil {
+		hosts = nil
+	}
+	hosts = uniqueHosts(hosts)
+	checked := 0
+	for _, host := range hosts {
+		if !s.shouldAutoCheckObservedHost(host) {
+			continue
+		}
+		checkCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		_, _ = s.autoLearnHost(checkCtx, host, true)
+		cancel()
+		checked++
+		if checked >= 3 {
+			return
+		}
+	}
+
+	sys := nm.Status(context.Background(), s.Store.Get().SystemVPN.NMConnectionID)
+	if sys.Connected {
+		for _, host := range uniqueHosts(observedBrowserHistoryHosts()) {
+			if !isCorpHost(host) || !s.shouldAutoCheckObservedHost(host) {
+				continue
+			}
+			_, _ = s.passiveLearnWorkHost(host)
+			checked++
+			if checked >= 3 {
+				break
+			}
+		}
+	}
+}
+
+func observedSingBoxHosts(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+singbox.ClashAPIAddr+"/connections", nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var data clashConnectionsResp
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	var hosts []string
+	for _, c := range data.Connections {
+		host := normalizeObservedHost(c.Metadata.Host)
+		if host == "" {
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		hosts = append(hosts, host)
+	}
+	return hosts, nil
+}
+
+func observedBrowserHistoryHosts() []string {
+	paths := browserHistoryPaths()
+	if len(paths) == 0 {
+		return nil
+	}
+	args := []string{"-c", `
+import sqlite3, sys, time, urllib.parse
+cutoff = int((time.time() - 120) * 1000000) + 11644473600000000
+seen = set()
+for path in sys.argv[1:]:
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True, timeout=0.2)
+        rows = con.execute("select url from urls where last_visit_time >= ? order by last_visit_time desc limit 80", (cutoff,)).fetchall()
+        con.close()
+    except Exception:
+        continue
+    for (u,) in rows:
+        host = urllib.parse.urlparse(u).hostname
+        if host and host not in seen:
+            seen.add(host)
+            print(host)
+`}
+	args = append(args, paths...)
+	out, err := exec.Command("python3", args...).Output()
+	if err != nil {
+		return nil
+	}
+	var hosts []string
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if host := normalizeObservedHost(line); host != "" {
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
+}
+
+func browserHistoryPaths() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	patterns := []string{
+		filepath.Join(home, ".config", "google-chrome", "*", "History"),
+		filepath.Join(home, ".config", "chromium", "*", "History"),
+		filepath.Join(home, "snap", "chromium", "common", "chromium", "*", "History"),
+		filepath.Join(home, ".var", "app", "*", "config", "*", "*", "History"),
+	}
+	var paths []string
+	for _, pattern := range patterns {
+		matches, _ := filepath.Glob(pattern)
+		for _, p := range matches {
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				paths = append(paths, p)
+			}
+		}
+	}
+	return paths
+}
+
+func uniqueHosts(in []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, h := range in {
+		h = normalizeObservedHost(h)
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+	}
+	return out
+}
+
+func normalizeObservedHost(raw string) string {
+	host := normalizeRulePattern(raw)
+	if host == "" || !strings.Contains(host, ".") {
+		return ""
+	}
+	if strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".arpa") {
+		return ""
+	}
+	ip := net.ParseIP(host)
+	if ip != nil {
+		return ""
+	}
+	return host
+}
+
+func (s *Server) shouldAutoCheckObservedHost(host string) bool {
+	const minInterval = 10 * time.Minute
+	now := time.Now()
+	st := s.Store.Get()
+	if node, err := s.selectedNode(st); err == nil && strings.EqualFold(host, node.Host) {
+		return false
+	}
+	if idx := findDomainRuleIndex(st.DomainRules, host); idx >= 0 {
+		rule := st.DomainRules[idx]
+		if rule.Source != "auto" {
+			return false
+		}
+		if !rule.LastCheckedAt.IsZero() && now.Sub(rule.LastCheckedAt) < minInterval {
+			return false
+		}
+	}
+	s.autoMu.Lock()
+	defer s.autoMu.Unlock()
+	if last, ok := s.observedHosts[host]; ok && now.Sub(last) < minInterval {
+		return false
+	}
+	s.observedHosts[host] = now
+	return true
+}
+
+func filterDomainRules(rules []config.DomainRule, id string) []config.DomainRule {
+	var out []config.DomainRule
+	for _, r := range rules {
+		if r.ID != id {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func filterAppRules(rules []config.AppRule, id string) []config.AppRule {
+	var out []config.AppRule
+	for _, r := range rules {
+		if r.ID != id {
+			out = append(out, r)
+		}
+	}
+	return out
+}

@@ -1,0 +1,47 @@
+// DNS только для tun100 (личный sing-box). tun0 = системный VPN — не трогаем.
+polkit.addRule(function(action, subject) {
+  var id = action.id;
+  if (id !== "org.freedesktop.resolve1.set-dns-servers" &&
+      id !== "org.freedesktop.resolve1.set-domains" &&
+      id !== "org.freedesktop.resolve1.set-default-route") {
+    return polkit.Result.NOT_HANDLED;
+  }
+  if (!subject.active || !subject.local) {
+    return polkit.Result.NOT_HANDLED;
+  }
+
+  function linkName() {
+    var keys = ["ifname", "interface", "device", "name", "link"];
+    for (var i = 0; i < keys.length; i++) {
+      var v = action.lookup(keys[i]);
+      if (v != null && String(v).length > 0) {
+        return String(v);
+      }
+    }
+    return null;
+  }
+
+  var dev = linkName();
+  if (dev !== null) {
+    if (dev === "tun100") {
+      return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+  }
+
+  var prog = action.lookup("program");
+  var comm = action.lookup("comm");
+  if (prog != null && String(prog).indexOf("sing-box") >= 0) {
+    return polkit.Result.YES;
+  }
+  if (comm != null && String(comm) === "sing-box") {
+    return polkit.Result.YES;
+  }
+
+  // Без имени интерфейса: default-route часто «пустой» запрос — не показывать окно пароля.
+  if (id === "org.freedesktop.resolve1.set-default-route") {
+    return polkit.Result.NO;
+  }
+
+  return polkit.Result.NOT_HANDLED;
+});
