@@ -1,4 +1,4 @@
-# VPN Router — make sync | make dev | make help
+# Router BOX — make sync | make dev | make help
 
 SHELL        := /bin/bash
 ROOT         := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
@@ -87,7 +87,7 @@ clean:
 	rm -f $(PID_FILE) $(SIDECAR)
 
 help:
-	@echo "VPN Router"
+	@echo "Router BOX"
 	@echo ""
 	@echo "  make sync     — зависимости + setcap/NM для личного VPN (sudo при первом разе)"
 	@echo "  make dev      — сборка + демон + Tauri (личный VPN без пароля в UI)"

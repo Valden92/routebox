@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "VPN Router",
+  "productName": "Router BOX",
   "version": "0.1.0",
   "identifier": "ru.dzaytsev.vpn-router",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "VPN Router",
+        "title": "Router BOX",
         "width": 1024,
         "height": 720,
         "minWidth": 800,

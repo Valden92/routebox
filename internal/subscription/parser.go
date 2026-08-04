@@ -81,6 +81,34 @@ func ValidNode(n Node) bool {
 	return ok
 }
 
+func FindNodeByID(nodes []Node, id string) (Node, bool) {
+	if id == "" {
+		return Node{}, false
+	}
+	for _, n := range nodes {
+		if n.ID == id {
+			return n, true
+		}
+	}
+	return Node{}, false
+}
+
+// FindNodeByEndpoint ищет тот же узел после смены raw URI (uuid/параметры),
+// когда host+port+protocol сохранились.
+func FindNodeByEndpoint(nodes []Node, host string, port int, protocol string) (Node, bool) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	protocol = strings.ToLower(strings.TrimSpace(protocol))
+	if host == "" || port <= 0 {
+		return Node{}, false
+	}
+	for _, n := range nodes {
+		if strings.EqualFold(n.Host, host) && n.Port == port && strings.EqualFold(n.Protocol, protocol) {
+			return n, true
+		}
+	}
+	return Node{}, false
+}
+
 func FilterValidNodes(nodes []Node) []Node {
 	var out []Node
 	for _, n := range nodes {

@@ -37,6 +37,44 @@ body {
   font-weight: 600;
 }
 
+.brand-title {
+  background: linear-gradient(
+    110deg,
+    #8ab4ff 0%,
+    #5b8def 18%,
+    #7ee7c5 42%,
+    #e8eaed 55%,
+    #5b8def 72%,
+    #8ab4ff 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: brand-shimmer 5.5s ease-in-out infinite;
+  letter-spacing: 0.02em;
+}
+
+@keyframes brand-shimmer {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-title {
+    animation: none;
+    background: none;
+    color: #e8eaed;
+    -webkit-text-fill-color: #e8eaed;
+  }
+}
+
 .tabs {
   display: flex;
   gap: 0.35rem;
@@ -212,6 +250,14 @@ select optgroup {
 
 .interval-label input[type="number"] {
   width: 4.5rem;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.interval-label input[type="number"]::-webkit-outer-spin-button,
+.interval-label input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .interval-label.is-disabled {
@@ -233,6 +279,23 @@ select optgroup {
 
 .sub-card.is-expanded {
   border-color: var(--accent);
+}
+
+.sub-card.is-active {
+  border-color: var(--ok);
+  box-shadow: inset 4px 0 0 var(--ok);
+}
+
+.sub-card.is-active.is-expanded {
+  border-color: var(--accent);
+  box-shadow: inset 4px 0 0 var(--ok);
+}
+
+.sub-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .sub-header {
