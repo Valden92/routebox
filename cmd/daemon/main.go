@@ -11,16 +11,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dzaytsev/vpn-router/internal/api"
-	"github.com/dzaytsev/vpn-router/internal/config"
-	"github.com/dzaytsev/vpn-router/internal/singbox"
+	"github.com/Valden92/routebox/internal/api"
+	"github.com/Valden92/routebox/internal/config"
+	"github.com/Valden92/routebox/internal/singbox"
 )
 
 func main() {
 	var (
-		dataDir  = flag.String("data", defaultDataDir(), "config data directory")
-		listen   = flag.String("listen", "127.0.0.1:47891", "API listen address")
-		unlock   = flag.String("unlock", "", "passphrase if config is encrypted")
+		dataDir = flag.String("data", defaultDataDir(), "config data directory")
+		listen  = flag.String("listen", "127.0.0.1:47891", "API listen address")
+		unlock  = flag.String("unlock", "", "passphrase if config is encrypted")
 	)
 	flag.Parse()
 
@@ -29,13 +29,14 @@ func main() {
 		log.Fatal(err)
 	}
 	if err := store.TryLoad(); err != nil {
-		if os.IsNotExist(err) && *unlock != "" {
-			if err := store.Unlock(*unlock); err != nil {
-				log.Fatal(err)
+		switch {
+		case os.IsNotExist(err) && *unlock != "":
+			if unlockErr := store.Unlock(*unlock); unlockErr != nil {
+				log.Fatal(unlockErr)
 			}
-		} else if os.IsNotExist(err) {
+		case os.IsNotExist(err):
 			_ = store.SavePlain()
-		} else if err != nil {
+		default:
 			log.Fatal(err)
 		}
 	}

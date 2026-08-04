@@ -65,7 +65,7 @@ func (s *Store) LoadEncrypted(passphrase string) error {
 		return err
 	}
 	var blob encryptedBlob
-	if err := json.Unmarshal(b, &blob); err != nil {
+	if err = json.Unmarshal(b, &blob); err != nil {
 		return err
 	}
 	plain, err := decrypt(blob, passphrase)

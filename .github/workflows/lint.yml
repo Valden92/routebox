@@ -1,0 +1,50 @@
+name: Lint
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.24.x"
+  NODE_VERSION: "20"
+  GOLANGCI_LINT_VERSION: v1.64.8
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: npm ci (desktop)
+        working-directory: desktop
+        run: npm ci
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: ./cmd/... ./internal/... ./tests/...
+          working-directory: .
+
+      - name: ESLint
+        run: make lint-ui

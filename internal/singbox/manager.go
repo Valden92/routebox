@@ -16,10 +16,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dzaytsev/vpn-router/internal/config"
-	"github.com/dzaytsev/vpn-router/internal/network"
-	"github.com/dzaytsev/vpn-router/internal/routing"
-	"github.com/dzaytsev/vpn-router/internal/subscription"
+	"github.com/Valden92/routebox/internal/config"
+	"github.com/Valden92/routebox/internal/network"
+	"github.com/Valden92/routebox/internal/routing"
+	"github.com/Valden92/routebox/internal/subscription"
 )
 
 type Manager struct {
@@ -56,7 +56,7 @@ func (m *Manager) LastError() string {
 	if m.lastError == "" {
 		return ""
 	}
-	return resolveErrorMessage(m.lastError, tailLogFatal(m.logPath), m.binPath)
+	return resolveErrorMessage(m.lastError, tailLogFatal(m.logPath))
 }
 
 func (m *Manager) aliveLocked() bool {
@@ -108,7 +108,7 @@ func (m *Manager) Start(_ context.Context) error {
 	go m.waitProcess(m.cmd)
 	time.Sleep(300 * time.Millisecond)
 	if !m.aliveLocked() {
-		hint := resolveErrorMessage(m.lastError, tailLogFatal(m.logPath), bin)
+		hint := resolveErrorMessage(m.lastError, tailLogFatal(m.logPath))
 		m.lastError = hint
 		RestoreAfterPersonalVPN()
 		return fmt.Errorf("sing-box не запустился: %s", hint)
@@ -250,17 +250,6 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 		"route":     buildRoute(st, node, sysUp, sysIface),
 	}
 	return writeJSON(path, cfg)
-}
-
-func pathTag(p config.RoutePath) string {
-	switch p {
-	case config.RouteWork:
-		return "work"
-	case config.RouteDirect:
-		return "direct"
-	default:
-		return "proxy"
-	}
 }
 
 func buildDirectOutbound(st config.Settings) map[string]any {
@@ -428,7 +417,7 @@ func isGenericExit(msg string) bool {
 	return strings.HasPrefix(msg, "exit status ")
 }
 
-func resolveErrorMessage(raw, logHint, binPath string) string {
+func resolveErrorMessage(raw, logHint string) string {
 	msg := strings.TrimSpace(logHint)
 	if msg == "" {
 		msg = strings.TrimSpace(raw)

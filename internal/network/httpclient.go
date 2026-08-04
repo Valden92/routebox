@@ -16,7 +16,7 @@ func HTTPClient(bindIface string, timeout time.Duration) *http.Client {
 		Transport: &http.Transport{
 			DialContext: dialer.DialContext,
 		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return http.ErrUseLastResponse
 			}

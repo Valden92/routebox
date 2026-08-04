@@ -50,7 +50,9 @@ function badge(ok: boolean, on: string, off: string) {
   return `<span class="badge ${ok ? "badge-ok" : "badge-err"}">${ok ? on : off}</span>`;
 }
 
-function systemVpnState(s: StatusResponse["systemVpn"]): "disconnected" | "connecting" | "connected" {
+function systemVpnState(
+  s: StatusResponse["systemVpn"],
+): "disconnected" | "connecting" | "connected" {
   if (s.state) return s.state;
   return s.connected ? "connected" : "disconnected";
 }
@@ -59,10 +61,7 @@ function systemVpnBadge(s: StatusResponse["systemVpn"]) {
   const st = systemVpnState(s);
   if (st === "connected") return badge(true, "Подключён", "Отключён");
   if (st === "connecting") {
-    const hint =
-      s.nmState && /need|auth/i.test(s.nmState)
-        ? "Ожидание MFA"
-        : "Подключение…";
+    const hint = s.nmState && /need|auth/i.test(s.nmState) ? "Ожидание MFA" : "Подключение…";
     return `<span class="badge badge-warn">${hint}</span>`;
   }
   return badge(false, "Подключён", "Отключён");
@@ -159,10 +158,7 @@ function renderProbeModal(report: SiteProbe) {
     ? `<p class="muted" style="margin:0 0 0.75rem">DNS → ${escapeHtml(report.resolvedIp)} · ${escapeHtml(report.url)}</p>`
     : `<p class="muted" style="margin:0 0 0.75rem">${escapeHtml(report.url)}</p>`;
 
-  openModal(
-    "Проверка сайта",
-    `${ipLine}${summary}<ul class="probe-list">${rows}</ul>`
-  );
+  openModal("Проверка сайта", `${ipLine}${summary}<ul class="probe-list">${rows}</ul>`);
 }
 
 function showProbeLoading(url: string) {
@@ -172,7 +168,7 @@ function showProbeLoading(url: string) {
      <div class="probe-loading">
        <div class="spinner" aria-hidden="true"></div>
        <span>Проверяем direct, системный и личный VPN…</span>
-     </div>`
+     </div>`,
   );
 }
 
@@ -189,7 +185,7 @@ function goToPersonalSetup(message: string) {
 function updateVpnToggleButtons(
   onBtn: HTMLButtonElement,
   offBtn: HTMLButtonElement,
-  opts: { active: boolean; onClickable?: boolean; onHint?: string }
+  opts: { active: boolean; onClickable?: boolean; onHint?: string },
 ) {
   const { active, onClickable = true, onHint = "" } = opts;
   onBtn.title = onHint;
@@ -291,15 +287,23 @@ async function refreshStatus() {
     ${!ready && s.personalVpn.message ? `<p class="muted">${escapeHtml(s.personalVpn.message)}</p>` : ""}
     ${s.personalVpn.hostConfigured === false ? `<p class="err">Выполните в терминале: <code>make sync</code></p>` : ""}
     ${s.personalVpn.routingRunning && !s.personalVpn.running && pvErr ? `<p class="err">${escapeHtml(pvErr)}</p>` : ""}
-    ${s.personalVpn.configMode === "coexist"
-      ? `<p class="muted">${escapeHtml(routerModeHint("coexist"))}</p>`
-      : ""}
-    ${s.personalVpn.configStale
-      ? `<p class="err">Конфиг sing-box устарел — <strong>выключите и снова включите</strong> личный VPN (сначала системный VPN в GNOME).</p>`
-      : ""}
-    ${s.personalVpn.running && s.personalVpn.configFileMode === "full" && s.personalVpn.systemVpnActive
-      ? `<p class="muted">Без <code>make sync</code> (polkit v6) при включении могут всплывать окна «Authentication» — их можно закрыть; после sync не должны.</p>`
-      : ""}
+    ${
+      s.personalVpn.configMode === "coexist"
+        ? `<p class="muted">${escapeHtml(routerModeHint("coexist"))}</p>`
+        : ""
+    }
+    ${
+      s.personalVpn.configStale
+        ? `<p class="err">Конфиг sing-box устарел — <strong>выключите и снова включите</strong> личный VPN (сначала системный VPN в GNOME).</p>`
+        : ""
+    }
+    ${
+      s.personalVpn.running &&
+      s.personalVpn.configFileMode === "full" &&
+      s.personalVpn.systemVpnActive
+        ? `<p class="muted">Без <code>make sync</code> (polkit v6) при включении могут всплывать окна «Authentication» — их можно закрыть; после sync не должны.</p>`
+        : ""
+    }
   `;
   updatePersonalVpnButtons(ready, s.personalVpn.running);
   if (ready) hidePersonalSetupBanner();
@@ -337,7 +341,10 @@ const subsByIdCache = new Map<string, Subscription>();
 
 function getNodeSort(subId: string): NodeSortMode {
   try {
-    const all = JSON.parse(localStorage.getItem(NODE_SORT_STORAGE_KEY) || "{}") as Record<string, NodeSortMode>;
+    const all = JSON.parse(localStorage.getItem(NODE_SORT_STORAGE_KEY) || "{}") as Record<
+      string,
+      NodeSortMode
+    >;
     const mode = all[subId];
     if (mode === "name-asc" || mode === "name-desc" || mode === "ping" || mode === "frequent") {
       return mode;
@@ -350,7 +357,10 @@ function getNodeSort(subId: string): NodeSortMode {
 
 function setNodeSort(subId: string, mode: NodeSortMode) {
   try {
-    const all = JSON.parse(localStorage.getItem(NODE_SORT_STORAGE_KEY) || "{}") as Record<string, NodeSortMode>;
+    const all = JSON.parse(localStorage.getItem(NODE_SORT_STORAGE_KEY) || "{}") as Record<
+      string,
+      NodeSortMode
+    >;
     all[subId] = mode;
     localStorage.setItem(NODE_SORT_STORAGE_KEY, JSON.stringify(all));
   } catch {
@@ -367,12 +377,19 @@ function nodeSortSelectHtml(subId: string): string {
     { value: "frequent", label: "Часто выбираемые" },
   ];
   const opts = options
-    .map((o) => `<option value="${o.value}"${sort === o.value ? " selected" : ""}>${o.label}</option>`)
+    .map(
+      (o) => `<option value="${o.value}"${sort === o.value ? " selected" : ""}>${o.label}</option>`,
+    )
     .join("");
   return `<label class="node-sort-label">Сортировка<select data-node-sort="${subId}">${opts}</select></label>`;
 }
 
-function cacheSubNodes(subId: string, nodes: Node[], pings: PingResult[] | null, sub?: Subscription) {
+function cacheSubNodes(
+  subId: string,
+  nodes: Node[],
+  pings: PingResult[] | null,
+  sub?: Subscription,
+) {
   nodesCache.set(subId, nodes);
   pingsCache.set(subId, pings);
   if (sub) subsByIdCache.set(subId, sub);
@@ -398,7 +415,7 @@ function sortNodes(
   nodes: Node[],
   mode: NodeSortMode,
   pingMap: Map<string, PingResult>,
-  selectCounts: Record<string, number>
+  selectCounts: Record<string, number>,
 ): Node[] {
   const sorted = [...nodes];
   switch (mode) {
@@ -422,7 +439,7 @@ function orderNodes(
   selectedNodeId: string | undefined,
   sortMode: NodeSortMode,
   pingMap: Map<string, PingResult>,
-  selectCounts: Record<string, number>
+  selectCounts: Record<string, number>,
 ): Node[] {
   if (!selectedNodeId) {
     return sortNodes(nodes, sortMode, pingMap, selectCounts);
@@ -446,7 +463,7 @@ function renderNodeRow(
   selectedNodeId: string | undefined,
   pingMap: Map<string, PingResult>,
   selectCounts: Record<string, number>,
-  sortMode: NodeSortMode
+  sortMode: NodeSortMode,
 ): string {
   const p = pingMap.get(n.id);
   const ping = p?.ok ? formatPing(p.latencyMs) : p?.error ? "недоступен" : "";
@@ -468,7 +485,7 @@ function renderNodesList(
   pings: PingResult[] | null,
   selectedNodeId?: string,
   sortMode: NodeSortMode = getNodeSort(subId),
-  selectCounts: Record<string, number> = {}
+  selectCounts: Record<string, number> = {},
 ) {
   const pingMap = new Map(pings?.map((p) => [p.nodeId, p]) ?? []);
   const ordered = orderNodes(nodes, selectedNodeId, sortMode, pingMap, selectCounts);
@@ -479,10 +496,16 @@ function renderNodesList(
     rows.push(renderNodeRow(ordered[0], selectedNodeId, pingMap, selectCounts, sortMode));
     if (ordered.length > 1) {
       rows.push('<li class="nodes-section-label muted">Остальные серверы</li>');
-      rows.push(...ordered.slice(1).map((n) => renderNodeRow(n, selectedNodeId, pingMap, selectCounts, sortMode)));
+      rows.push(
+        ...ordered
+          .slice(1)
+          .map((n) => renderNodeRow(n, selectedNodeId, pingMap, selectCounts, sortMode)),
+      );
     }
   } else {
-    rows.push(...ordered.map((n) => renderNodeRow(n, selectedNodeId, pingMap, selectCounts, sortMode)));
+    rows.push(
+      ...ordered.map((n) => renderNodeRow(n, selectedNodeId, pingMap, selectCounts, sortMode)),
+    );
   }
   container.innerHTML = rows.join("");
   container.scrollTop = 0;
@@ -514,7 +537,7 @@ function rerenderNodesList(subId: string) {
     pingsCache.get(subId) ?? null,
     resolveSelectedNodeId(subId, sub),
     getNodeSort(subId),
-    sub?.nodeSelectCounts ?? {}
+    sub?.nodeSelectCounts ?? {},
   );
 }
 
@@ -555,7 +578,7 @@ async function expandSubscription(id: string, forceOpen = false) {
       null,
       resolveSelectedNodeId(id, sub),
       getNodeSort(id),
-      sub?.nodeSelectCounts ?? {}
+      sub?.nodeSelectCounts ?? {},
     );
     cacheSubNodes(id, nodes, null, sub);
     const meta = card.querySelector(`[data-node-count="${id}"]`);
@@ -778,7 +801,9 @@ async function loadSubscriptions() {
         ]);
         const sub = subs.find((s) => s.id === id);
         setNodeSort(id, "ping");
-        const sortSelect = box.querySelector(`[data-node-sort="${id}"]`) as HTMLSelectElement | null;
+        const sortSelect = box.querySelector(
+          `[data-node-sort="${id}"]`,
+        ) as HTMLSelectElement | null;
         if (sortSelect) sortSelect.value = "ping";
         cacheSubNodes(id, nodes, pings, sub);
         renderNodesList(
@@ -788,7 +813,7 @@ async function loadSubscriptions() {
           pings,
           resolveSelectedNodeId(id, sub),
           getNodeSort(id),
-          sub?.nodeSelectCounts ?? {}
+          sub?.nodeSelectCounts ?? {},
         );
         if (getNodeSort(id) === "ping") {
           showToast("Список отсортирован по пингу");
@@ -806,7 +831,9 @@ async function loadSubscriptions() {
 
 function rulePathSelect(rule: DomainRule): string {
   const options = (Object.keys(pathLabels) as RoutePath[])
-    .map((p) => `<option value="${p}"${rule.path === p ? " selected" : ""}>${pathLabels[p]}</option>`)
+    .map(
+      (p) => `<option value="${p}"${rule.path === p ? " selected" : ""}>${pathLabels[p]}</option>`,
+    )
     .join("");
   return `<select data-rule-path="${rule.id}">${options}</select>`;
 }
@@ -1026,7 +1053,7 @@ window.addEventListener("DOMContentLoaded", () => {
       showToast(
         res.status === "personal_disabled_deferred"
           ? "Личный VPN выключен в приложении. Чтобы не сбрасывать системный VPN, сетевой конфиг применится позже."
-          : "Личный VPN выключен"
+          : "Личный VPN выключен",
       );
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Ошибка", true);
@@ -1039,7 +1066,9 @@ window.addEventListener("DOMContentLoaded", () => {
   el("#form-add-sub").addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target as HTMLFormElement);
-    const btn = (e.target as HTMLFormElement).querySelector('button[type="submit"]') as HTMLButtonElement;
+    const btn = (e.target as HTMLFormElement).querySelector(
+      'button[type="submit"]',
+    ) as HTMLButtonElement;
     const auto = fd.get("autoRefresh") === "on";
     const mins = parseInt(String(fd.get("refreshMinutes") || "60"), 10) || 60;
     (btn as HTMLButtonElement).disabled = true;
@@ -1101,7 +1130,7 @@ window.addEventListener("DOMContentLoaded", () => {
       const applied = res.reapplied ? " Конфиг VPN переприменён." : "";
       showToast(
         res.message || `Для ${res.host} выбран путь: ${path ? pathLabels[path] : "—"}.${applied}`,
-        Boolean(res.message && !path)
+        Boolean(res.message && !path),
       );
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Ошибка авто-проверки", true);
@@ -1120,28 +1149,29 @@ window.addEventListener("DOMContentLoaded", () => {
     const btn = el<HTMLButtonElement>("#btn-scan-apps");
     (btn as HTMLButtonElement).disabled = true;
     try {
-      const apps = await api<{ processName: string; connections: number; execPath?: string }[]>(
-        "/api/apps"
-      );
+      const apps =
+        await api<{ processName: string; connections: number; execPath?: string }[]>("/api/apps");
       el("#apps-list").innerHTML = apps
         .slice(0, 40)
         .map(
           (a) =>
-            `<li>${escapeHtml(a.processName)} (${a.connections}) <button data-app="${escapeHtml(a.processName)}" class="small">→ личный</button></li>`
+            `<li>${escapeHtml(a.processName)} (${a.connections}) <button data-app="${escapeHtml(a.processName)}" class="small">→ личный</button></li>`,
         )
         .join("");
-      el("#apps-list").querySelectorAll("[data-app]").forEach((b) => {
-        b.addEventListener("click", async () => {
-          await api("/api/rules", {
-            method: "POST",
-            body: JSON.stringify({
-              processName: (b as HTMLButtonElement).dataset.app,
-              path: "personal",
-            }),
+      el("#apps-list")
+        .querySelectorAll("[data-app]")
+        .forEach((b) => {
+          b.addEventListener("click", async () => {
+            await api("/api/rules", {
+              method: "POST",
+              body: JSON.stringify({
+                processName: (b as HTMLButtonElement).dataset.app,
+                path: "personal",
+              }),
+            });
+            loadRules();
           });
-          loadRules();
         });
-      });
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Ошибка", true);
     } finally {

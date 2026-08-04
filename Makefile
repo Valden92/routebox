@@ -2,9 +2,10 @@
 
 SHELL        := /bin/bash
 ROOT         := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-export PATH  := $(HOME)/.local/go/bin:$(HOME)/.cargo/bin:$(HOME)/.local/bin:$(PATH)
-
 GO           ?= go
+GOPATH_BIN   := $(shell $(GO) env GOPATH 2>/dev/null)/bin
+export PATH  := $(HOME)/.local/go/bin:$(HOME)/go/bin:$(GOPATH_BIN):$(HOME)/.cargo/bin:$(HOME)/.local/bin:$(PATH)
+
 CARGO_TARGET ?= x86_64-unknown-linux-gnu
 DAEMON       := $(ROOT)/bin/vpn-router-daemon
 SIDECAR      := $(ROOT)/desktop/src-tauri/binaries/vpn-router-daemon-$(CARGO_TARGET)
@@ -13,7 +14,8 @@ PID_FILE     := $(ROOT)/.daemon.pid
 SYNC_SCRIPT  := $(ROOT)/scripts/sync-deps.sh
 
 .PHONY: all dev run build sidecar daemon daemon-fg desktop sync stop restart clean help \
-	install-sing-box setcap-sing-box configure-host recover-network deps deps-apt sync-go sync-node sync-rust
+	install-sing-box setcap-sing-box configure-host recover-network deps deps-apt sync-go sync-node sync-rust \
+	lint lint-go lint-ui lint-rust fmt fmt-go fmt-ui fmt-rust check-fmt test lint-tools
 
 .DEFAULT_GOAL := dev
 
@@ -86,6 +88,48 @@ clean:
 	rm -rf $(ROOT)/bin $(ROOT)/desktop/dist $(ROOT)/desktop/node_modules
 	rm -f $(PID_FILE) $(SIDECAR)
 
+## Инструменты линтинга (golangci-lint в ~/.local/go/bin)
+lint-tools:
+	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+	@cd $(ROOT)/desktop && npm install
+
+lint: lint-go lint-ui
+
+test:
+	cd $(ROOT) && $(GO) test ./tests/... ./internal/...
+
+lint-go:
+	@command -v golangci-lint >/dev/null || { echo "run: make lint-tools"; exit 1; }
+	cd $(ROOT) && golangci-lint run ./cmd/... ./internal/... ./tests/...
+
+lint-ui:
+	cd $(ROOT)/desktop && npm run lint
+
+# Нужен stub/реальный sidecar (tauri-build проверяет externalBin).
+lint-rust:
+	@mkdir -p $(dir $(SIDECAR))
+	@test -e "$(SIDECAR)" || touch "$(SIDECAR)"
+	cd $(ROOT)/desktop/src-tauri && cargo clippy -- -W clippy::all
+
+## Только проверка формата (без правок) — для CI
+check-fmt:
+	@bad=$$(cd $(ROOT) && gofmt -l cmd internal tests); \
+	if [ -n "$$bad" ]; then echo "gofmt needed:"; echo "$$bad"; exit 1; fi
+	cd $(ROOT)/desktop && npm run format:check
+	cd $(ROOT)/desktop/src-tauri && cargo fmt --check
+
+fmt: fmt-go fmt-ui fmt-rust
+
+fmt-go:
+	cd $(ROOT) && $(GO) fmt ./cmd/... ./internal/... ./tests/...
+	@command -v goimports >/dev/null && cd $(ROOT) && goimports -w -local github.com/Valden92/routebox ./cmd ./internal ./tests || true
+
+fmt-ui:
+	cd $(ROOT)/desktop && npm run fmt
+
+fmt-rust:
+	cd $(ROOT)/desktop/src-tauri && cargo fmt
+
 help:
 	@echo "Router BOX"
 	@echo ""
@@ -96,6 +140,12 @@ help:
 	@echo "  make desktop  — только UI"
 	@echo "  make stop     — остановить демон"
 	@echo "  make build    — собрать демон"
+	@echo "  make lint     — Go (golangci) + ESLint"
+	@echo "  make lint-rust — clippy (Tauri; тяжёлый, в CI отдельно по paths)"
+	@echo "  make check-fmt — проверка формата (gofmt / Prettier / rustfmt)"
+	@echo "  make fmt      — автоформат Go / Prettier+ESLint / rustfmt"
+	@echo "  make test     — go test ./tests/... ./internal/..."
+	@echo "  make lint-tools — поставить golangci-lint и npm lint deps"
 	@echo "  make configure-host — повторить настройку TUN/NM (обычно не нужно после sync)"
 	@echo "  make recover-network — если пропал интернет после личного VPN"
 	@echo "  make clean"

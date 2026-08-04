@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dzaytsev/vpn-router/internal/config"
-	"github.com/dzaytsev/vpn-router/internal/nm"
+	"github.com/Valden92/routebox/internal/config"
+	"github.com/Valden92/routebox/internal/nm"
 )
 
 // SystemVPNUp — системный VPN активен или подключается (NM).

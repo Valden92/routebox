@@ -2,7 +2,7 @@
 
 package singbox
 
-import "github.com/dzaytsev/vpn-router/internal/config"
+import "github.com/Valden92/routebox/internal/config"
 
 func systemVPNUp(st config.Settings) bool {
 	return workVPNActive("tun0")

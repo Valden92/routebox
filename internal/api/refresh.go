@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/dzaytsev/vpn-router/internal/config"
-	"github.com/dzaytsev/vpn-router/internal/subscription"
+	"github.com/Valden92/routebox/internal/config"
+	"github.com/Valden92/routebox/internal/subscription"
 )
 
 type refreshScheduler struct {
@@ -79,28 +79,14 @@ func reconcileSelectedNode(store *config.Store, subID string, previous, next []s
 			if cur.Subscriptions[i].ID != subID {
 				continue
 			}
-			sel := cur.Subscriptions[i].SelectedNodeID
-			if sel == "" {
-				return
-			}
-			if _, ok := subscription.FindNodeByID(next, sel); ok {
-				return
-			}
-			if old, ok := subscription.FindNodeByID(previous, sel); ok {
-				if remapped, ok := subscription.FindNodeByEndpoint(next, old.Host, old.Port, old.Protocol); ok {
-					cur.Subscriptions[i].SelectedNodeID = remapped.ID
-					if cur.Subscriptions[i].NodeSelectCounts == nil {
-						cur.Subscriptions[i].NodeSelectCounts = make(map[string]int)
-					}
-					cur.Subscriptions[i].NodeSelectCounts[remapped.ID] += cur.Subscriptions[i].NodeSelectCounts[sel]
-					delete(cur.Subscriptions[i].NodeSelectCounts, sel)
-					return
-				}
-			}
-			cur.Subscriptions[i].SelectedNodeID = ""
-			if cur.Subscriptions[i].NodeSelectCounts != nil {
-				delete(cur.Subscriptions[i].NodeSelectCounts, sel)
-			}
+			id, counts := subscription.RemapSelection(
+				cur.Subscriptions[i].SelectedNodeID,
+				cur.Subscriptions[i].NodeSelectCounts,
+				previous,
+				next,
+			)
+			cur.Subscriptions[i].SelectedNodeID = id
+			cur.Subscriptions[i].NodeSelectCounts = counts
 			return
 		}
 	})

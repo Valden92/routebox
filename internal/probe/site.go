@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dzaytsev/vpn-router/internal/config"
-	"github.com/dzaytsev/vpn-router/internal/network"
+	"github.com/Valden92/routebox/internal/config"
+	"github.com/Valden92/routebox/internal/network"
 )
 
 type PathResult struct {
@@ -127,7 +127,7 @@ func probeHTTPClient(bindOrProxy string, timeout time.Duration) *http.Client {
 				Transport: &http.Transport{
 					Proxy: http.ProxyURL(u),
 				},
-				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 					if len(via) >= 5 {
 						return http.ErrUseLastResponse
 					}
@@ -168,4 +168,25 @@ func FormatBest(r SiteReport) string {
 		return "unavailable"
 	}
 	return fmt.Sprintf("%s", r.BestPath)
+}
+
+// ResultForPath возвращает результат по пути или nil.
+func ResultForPath(report SiteReport, path config.RoutePath) *PathResult {
+	for i := range report.Results {
+		if report.Results[i].Path == path {
+			return &report.Results[i]
+		}
+	}
+	return nil
+}
+
+// BestAvailablePath — первый доступный путь в порядке DefaultPaths.
+func BestAvailablePath(report SiteReport) (config.RoutePath, bool) {
+	for _, path := range DefaultPaths() {
+		r := ResultForPath(report, path)
+		if r != nil && r.Available {
+			return path, true
+		}
+	}
+	return "", false
 }

@@ -1,0 +1,13 @@
+---
+description: Стиль TypeScript UI (desktop/)
+globs: "desktop/**/*.{ts,css,html}"
+alwaysApply: false
+---
+
+# Desktop UI (TypeScript)
+
+- Линт/формат: `make lint-ui` / `make fmt-ui` (ESLint + Prettier).
+- API-клиент — `desktop/src/api.ts`; базовый URL `http://127.0.0.1:47891`.
+- Не тащить React/Vue без явного решения; сейчас vanilla TS + Vite.
+- Сохранять существующие паттерны карточек статуса и терминов: direct / системный VPN / личный VPN.
+- Тесты (когда появятся): `*.test.ts` / `*.spec.ts` — ослабленные правила ESLint уже в `eslint.config.js`.

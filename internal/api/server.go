@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,15 +18,15 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/google/uuid"
 
-	"github.com/dzaytsev/vpn-router/internal/apps"
-	"github.com/dzaytsev/vpn-router/internal/config"
-	"github.com/dzaytsev/vpn-router/internal/network"
-	"github.com/dzaytsev/vpn-router/internal/nm"
-	"github.com/dzaytsev/vpn-router/internal/ping"
-	"github.com/dzaytsev/vpn-router/internal/probe"
-	"github.com/dzaytsev/vpn-router/internal/routing"
-	"github.com/dzaytsev/vpn-router/internal/singbox"
-	"github.com/dzaytsev/vpn-router/internal/subscription"
+	"github.com/Valden92/routebox/internal/apps"
+	"github.com/Valden92/routebox/internal/config"
+	"github.com/Valden92/routebox/internal/network"
+	"github.com/Valden92/routebox/internal/nm"
+	"github.com/Valden92/routebox/internal/ping"
+	"github.com/Valden92/routebox/internal/probe"
+	"github.com/Valden92/routebox/internal/routing"
+	"github.com/Valden92/routebox/internal/singbox"
+	"github.com/Valden92/routebox/internal/subscription"
 )
 
 type Server struct {
@@ -279,14 +277,6 @@ func (s *Server) personalReapply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"status": "reapplied", "configMode": singbox.ConfigModeFor(st)})
-}
-
-func (s *Server) startPersonalVPN(ctx context.Context, st config.Settings, node subscription.Node) error {
-	st.PersonalVPN.Enabled = true
-	if err := singbox.ProbeProxyReachable(node, st.MainInterface); err != nil {
-		return err
-	}
-	return s.ensureRouter(ctx)
 }
 
 func (s *Server) ensureRouter(ctx context.Context) error {
@@ -720,7 +710,7 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 				ID: id, ProcessName: req.ProcessName, Path: req.Path, Enabled: true,
 			})
 		} else {
-			pattern := normalizeRulePattern(req.Pattern)
+			pattern := routing.NormalizeRulePattern(req.Pattern)
 			if pattern == "" {
 				pattern = req.Pattern
 			}
@@ -752,7 +742,7 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if req.Pattern != "" {
-				st.DomainRules[i].Pattern = normalizeRulePattern(req.Pattern)
+				st.DomainRules[i].Pattern = routing.NormalizeRulePattern(req.Pattern)
 			}
 			if req.Path != "" {
 				st.DomainRules[i].Path = req.Path
@@ -786,19 +776,19 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rule not found", 404)
 		return
 	}
-	if reapplied, err := s.reapplyPersonalIfRunning(r.Context()); err != nil {
+	reapplied, err := s.reapplyPersonalIfRunning(r.Context())
+	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "reapply_failed", err.Error())
 		return
-	} else {
-		writeJSON(w, map[string]any{"status": "updated", "reapplied": reapplied})
 	}
+	writeJSON(w, map[string]any{"status": "updated", "reapplied": reapplied})
 }
 
 func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	_ = s.Store.Update(func(st *config.Settings) {
-		st.DomainRules = filterDomainRules(st.DomainRules, id)
-		st.AppRules = filterAppRules(st.AppRules, id)
+		st.DomainRules = routing.FilterDomainRules(st.DomainRules, id)
+		st.AppRules = routing.FilterAppRules(st.AppRules, id)
 	})
 	writeJSON(w, map[string]string{"status": "deleted"})
 }
@@ -910,12 +900,12 @@ func (s *Server) reapplyPersonalIfRunning(ctx context.Context) (bool, error) {
 var errEmptyHost = errors.New("empty host")
 
 func (s *Server) autoLearnHost(ctx context.Context, raw string, allowReapply bool) (autoCheckResp, error) {
-	host := normalizeRulePattern(raw)
+	host := routing.NormalizeRulePattern(raw)
 	if host == "" {
 		return autoCheckResp{}, errEmptyHost
 	}
 	report := s.checkSiteReport(ctx, host)
-	best, hasBest := bestAvailablePath(report)
+	best, hasBest := probe.BestAvailablePath(report)
 	now := time.Now()
 	resp := autoCheckResp{Host: host, Report: report}
 	if hasBest {
@@ -927,12 +917,12 @@ func (s *Server) autoLearnHost(ctx context.Context, raw string, allowReapply boo
 	var rule config.DomainRule
 	var ruleFound bool
 	err := s.Store.Update(func(cur *config.Settings) {
-		idx := findDomainRuleIndex(cur.DomainRules, host)
+		idx := routing.FindDomainRuleIndex(cur.DomainRules, host)
 		if idx >= 0 {
 			ruleFound = true
 			cur.DomainRules[idx].LastCheckedAt = now
 			cur.DomainRules[idx].CheckCount++
-			current := resultForPath(report, cur.DomainRules[idx].Path)
+			current := probe.ResultForPath(report, cur.DomainRules[idx].Path)
 			switch {
 			case current != nil && current.Skipped:
 				cur.DomainRules[idx].LastError = current.SkipReason
@@ -999,14 +989,14 @@ func (s *Server) autoLearnHost(ctx context.Context, raw string, allowReapply boo
 }
 
 func (s *Server) passiveLearnWorkHost(raw string) (bool, error) {
-	host := normalizeRulePattern(raw)
+	host := routing.NormalizeRulePattern(raw)
 	if host == "" {
 		return false, errEmptyHost
 	}
 	now := time.Now()
 	changed := false
 	err := s.Store.Update(func(cur *config.Settings) {
-		idx := findDomainRuleIndex(cur.DomainRules, host)
+		idx := routing.FindDomainRuleIndex(cur.DomainRules, host)
 		if idx >= 0 {
 			r := &cur.DomainRules[idx]
 			if r.Source != "auto" {
@@ -1036,74 +1026,6 @@ func (s *Server) passiveLearnWorkHost(raw string) (bool, error) {
 		changed = true
 	})
 	return changed, err
-}
-
-func isCorpHost(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	for _, suffix := range routing.DefaultCorpSuffixes() {
-		if suffix != "" && strings.HasSuffix(host, strings.ToLower(suffix)) {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizeRulePattern(raw string) string {
-	raw = strings.ToLower(strings.TrimSpace(raw))
-	if raw == "" {
-		return ""
-	}
-	if strings.HasPrefix(raw, "*.") {
-		return raw
-	}
-	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	host := u.Hostname()
-	if host == "" {
-		host = strings.TrimPrefix(strings.TrimPrefix(raw, "https://"), "http://")
-		if i := strings.IndexAny(host, "/:"); i >= 0 {
-			host = host[:i]
-		}
-	}
-	return strings.TrimSpace(host)
-}
-
-func findDomainRuleIndex(rules []config.DomainRule, host string) int {
-	host = strings.ToLower(strings.TrimSpace(host))
-	for i, r := range rules {
-		pattern := strings.ToLower(strings.TrimSpace(r.Pattern))
-		if pattern == host {
-			return i
-		}
-		if strings.HasPrefix(pattern, "*.") && strings.HasSuffix(host, strings.TrimPrefix(pattern, "*")) {
-			return i
-		}
-	}
-	return -1
-}
-
-func resultForPath(report probe.SiteReport, path config.RoutePath) *probe.PathResult {
-	for i := range report.Results {
-		if report.Results[i].Path == path {
-			return &report.Results[i]
-		}
-	}
-	return nil
-}
-
-func bestAvailablePath(report probe.SiteReport) (config.RoutePath, bool) {
-	for _, path := range probe.DefaultPaths() {
-		r := resultForPath(report, path)
-		if r != nil && r.Available {
-			return path, true
-		}
-	}
-	return "", false
 }
 
 type clashConnectionsResp struct {
@@ -1160,7 +1082,7 @@ func (s *Server) observeTraffic() {
 	if err != nil {
 		hosts = nil
 	}
-	hosts = uniqueHosts(hosts)
+	hosts = routing.UniqueHosts(hosts)
 	checked := 0
 	for _, host := range hosts {
 		if !s.shouldAutoCheckObservedHost(host) {
@@ -1177,8 +1099,8 @@ func (s *Server) observeTraffic() {
 
 	sys := nm.Status(context.Background(), s.Store.Get().SystemVPN.NMConnectionID)
 	if sys.Connected {
-		for _, host := range uniqueHosts(observedBrowserHistoryHosts()) {
-			if !isCorpHost(host) || !s.shouldAutoCheckObservedHost(host) {
+		for _, host := range routing.UniqueHosts(observedBrowserHistoryHosts()) {
+			if !routing.IsCorpHost(host) || !s.shouldAutoCheckObservedHost(host) {
 				continue
 			}
 			_, _ = s.passiveLearnWorkHost(host)
@@ -1208,7 +1130,7 @@ func observedSingBoxHosts(ctx context.Context) ([]string, error) {
 	seen := map[string]struct{}{}
 	var hosts []string
 	for _, c := range data.Connections {
-		host := normalizeObservedHost(c.Metadata.Host)
+		host := routing.NormalizeObservedHost(c.Metadata.Host)
 		if host == "" {
 			continue
 		}
@@ -1250,7 +1172,7 @@ for path in sys.argv[1:]:
 	}
 	var hosts []string
 	for line := range strings.SplitSeq(string(out), "\n") {
-		if host := normalizeObservedHost(line); host != "" {
+		if host := routing.NormalizeObservedHost(line); host != "" {
 			hosts = append(hosts, host)
 		}
 	}
@@ -1280,38 +1202,6 @@ func browserHistoryPaths() []string {
 	return paths
 }
 
-func uniqueHosts(in []string) []string {
-	seen := map[string]struct{}{}
-	var out []string
-	for _, h := range in {
-		h = normalizeObservedHost(h)
-		if h == "" {
-			continue
-		}
-		if _, ok := seen[h]; ok {
-			continue
-		}
-		seen[h] = struct{}{}
-		out = append(out, h)
-	}
-	return out
-}
-
-func normalizeObservedHost(raw string) string {
-	host := normalizeRulePattern(raw)
-	if host == "" || !strings.Contains(host, ".") {
-		return ""
-	}
-	if strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".arpa") {
-		return ""
-	}
-	ip := net.ParseIP(host)
-	if ip != nil {
-		return ""
-	}
-	return host
-}
-
 func (s *Server) shouldAutoCheckObservedHost(host string) bool {
 	const minInterval = 10 * time.Minute
 	now := time.Now()
@@ -1319,7 +1209,7 @@ func (s *Server) shouldAutoCheckObservedHost(host string) bool {
 	if node, err := s.selectedNode(st); err == nil && strings.EqualFold(host, node.Host) {
 		return false
 	}
-	if idx := findDomainRuleIndex(st.DomainRules, host); idx >= 0 {
+	if idx := routing.FindDomainRuleIndex(st.DomainRules, host); idx >= 0 {
 		rule := st.DomainRules[idx]
 		if rule.Source != "auto" {
 			return false
@@ -1335,24 +1225,4 @@ func (s *Server) shouldAutoCheckObservedHost(host string) bool {
 	}
 	s.observedHosts[host] = now
 	return true
-}
-
-func filterDomainRules(rules []config.DomainRule, id string) []config.DomainRule {
-	var out []config.DomainRule
-	for _, r := range rules {
-		if r.ID != id {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-func filterAppRules(rules []config.AppRule, id string) []config.AppRule {
-	var out []config.AppRule
-	for _, r := range rules {
-		if r.ID != id {
-			out = append(out, r)
-		}
-	}
-	return out
 }

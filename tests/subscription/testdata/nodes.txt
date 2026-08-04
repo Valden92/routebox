@@ -1,0 +1,2 @@
+# Synthetic subscription lines for unit tests (not real credentials).
+vless://aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa@testdata.example.com:443?encryption=none&security=tls&sni=testdata.example.com#TestNode

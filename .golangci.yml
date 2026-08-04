@@ -1,0 +1,96 @@
+# golangci-lint — Go daemon / internal packages
+# Install: make lint-tools
+# Run:     make lint-go
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    # core
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    # style (format checks live in `make check-fmt` / CI format job)
+    - misspell
+    - revive
+    - unconvert
+    # tests (apply to *_test.go)
+    - thelper
+    - tparallel
+    - testableexamples
+
+linters-settings:
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+  misspell:
+    locale: US
+  revive:
+    severity: warning
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: error-return
+      - name: error-strings
+      - name: errorf
+      - name: increment-decrement
+      - name: indent-error-flow
+      - name: package-comments
+        disabled: true
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: unnecessary-stmt
+      - name: unreachable-code
+      - name: unused-parameter
+      - name: var-declaration
+      - name: var-naming
+  thelper:
+    test:
+      begin: true
+    fuzz:
+      begin: true
+    benchmark:
+      begin: true
+    tb:
+      begin: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-use-default: true
+  exclude-rules:
+    # Platform stubs may look unused when tagged out of the build.
+    - path: _stub\.go$
+      linters:
+        - unused
+    # Tests: allow shorter names and intentional ignore of some errors.
+    - path: _test\.go$
+      linters:
+        - revive
+      text: "var-naming|unused-parameter|exported"
+    - path: _test\.go$
+      linters:
+        - errcheck
+      text: "Error return value of .* is not checked"
+    # Don't require t.Parallel on every test yet (enable later if desired).
+    - path: _test\.go$
+      linters:
+        - tparallel
+      text: "does not call t.Parallel"
+
+severity:
+  default-severity: error
+  rules:
+    - linters:
+        - revive
+        - misspell
+      severity: warning
