@@ -74,6 +74,13 @@ func (s *Server) personalReadiness() PersonalReadiness {
 			Message:    "Выберите сервер в списке узлов",
 		}
 	}
+	if _, ok := subscription.FindNodeByID(c.Nodes, sub.SelectedNodeID); !ok {
+		return PersonalReadiness{
+			Configured: false,
+			Reason:     "server_missing",
+			Message:    "Выбранный сервер исчез из подписки — откройте список и выберите другой",
+		}
+	}
 	return PersonalReadiness{Configured: true, Reason: "ok"}
 }
 

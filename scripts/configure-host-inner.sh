@@ -11,7 +11,7 @@ fi
 
 mkdir -p /etc/NetworkManager/conf.d
 tee "$NM_DROPIN" >/dev/null <<'EOF'
-# VPN Router: только tun100 (личный sing-box). tun0 = рабочий VPN — должен оставаться managed (MFA).
+# Router BOX: только tun100 (личный sing-box). tun0 = рабочий VPN — должен оставаться managed (MFA).
 [keyfile]
 unmanaged-devices=interface-name:tun100
 EOF

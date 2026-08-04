@@ -463,7 +463,9 @@ func (s *Server) refreshSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "в подписке не найдено серверов", 400)
 		return
 	}
+	previous, _ := subscription.LoadCache(st.DataDir, id)
 	_ = subscription.SaveCache(st.DataDir, id, nodes)
+	s.reconcileSelectedNodeAfterRefresh(id, previous.Nodes, nodes)
 	_ = s.Store.Update(func(cur *config.Settings) {
 		for i := range cur.Subscriptions {
 			if cur.Subscriptions[i].ID == id {
@@ -664,19 +666,26 @@ func (s *Server) selectedNode(st config.Settings) (subscription.Node, error) {
 			break
 		}
 	}
+	if sub.ID == "" {
+		return subscription.Node{}, os.ErrNotExist
+	}
+	if sub.SelectedNodeID == "" {
+		return subscription.Node{}, fmt.Errorf("сервер не выбран")
+	}
 	c, err := subscription.LoadCache(st.DataDir, id)
 	if err != nil {
 		return subscription.Node{}, err
 	}
-	for _, n := range c.Nodes {
-		if n.ID == sub.SelectedNodeID {
-			return n, nil
-		}
+	if n, ok := subscription.FindNodeByID(c.Nodes, sub.SelectedNodeID); ok {
+		return n, nil
 	}
-	if len(c.Nodes) > 0 {
-		return c.Nodes[0], nil
-	}
-	return subscription.Node{}, os.ErrNotExist
+	return subscription.Node{}, fmt.Errorf("выбранный сервер исчез из подписки — выберите другой")
+}
+
+// reconcileSelectedNodeAfterRefresh сохраняет выбор, если узел остался или
+// тот же endpoint (host:port:protocol) есть под новым id; иначе сбрасывает выбор.
+func (s *Server) reconcileSelectedNodeAfterRefresh(subID string, previous, next []subscription.Node) {
+	reconcileSelectedNode(s.Store, subID, previous, next)
 }
 
 func (s *Server) listRules(w http.ResponseWriter, _ *http.Request) {

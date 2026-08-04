@@ -21,6 +21,27 @@ const pathLabels: Record<RoutePath, string> = {
   personal: "Личный VPN",
 };
 
+function routerModeLabel(mode?: string): string {
+  if (mode === "coexist") {
+    return "Совместно с системным VPN";
+  }
+  return "Обычный";
+}
+
+function routerModeHint(mode?: string): string {
+  if (mode === "coexist") {
+    return "Системный VPN активен: рабочие сайты идут через него, остальное — по правилам или напрямую.";
+  }
+  return "Системный VPN выключен: трафик идёт напрямую или через личный VPN по правилам.";
+}
+
+function routerPriorityLabel(mode?: string): string {
+  if (mode === "coexist") {
+    return "Обычная сеть > Системный VPN > Личный VPN";
+  }
+  return "Обычная сеть > Личный VPN";
+}
+
 function el<T extends HTMLElement>(sel: string): T {
   return document.querySelector(sel) as T;
 }
@@ -255,11 +276,11 @@ async function refreshStatus() {
     ${badge(Boolean(s.personalVpn.routingRunning), "Активен", "Выключен")}
     <dl>
       <dt>Интерфейс</dt><dd>tun100</dd>
-      <dt>Режим</dt><dd>${s.personalVpn.configMode === "coexist" ? "coexist" : "direct-first"}</dd>
+      <dt>Режим</dt><dd>${escapeHtml(routerModeLabel(s.personalVpn.configMode))}</dd>
+      <dt>Приоритет</dt><dd>${escapeHtml(routerPriorityLabel(s.personalVpn.configMode))}</dd>
       <dt>Наблюдение</dt><dd>${s.personalVpn.routingRunning ? "Chrome, Cursor, терминал" : "—"}</dd>
-      <dt>Default</dt><dd>Без VPN</dd>
     </dl>
-    <p class="muted">Пока приложение запущено, трафик проходит через локальный маршрутизатор: правила могут направлять домены в обычную сеть, системный VPN или личный VPN.</p>
+    <p class="muted">${escapeHtml(routerModeHint(s.personalVpn.configMode))}</p>
     ${!s.personalVpn.routingRunning && pvErr ? `<p class="err">${escapeHtml(pvErr)}</p>` : ""}
   `;
   const cfgBadge = badge(ready, "Настроен", "Не настроен");
@@ -271,7 +292,7 @@ async function refreshStatus() {
     ${s.personalVpn.hostConfigured === false ? `<p class="err">Выполните в терминале: <code>make sync</code></p>` : ""}
     ${s.personalVpn.routingRunning && !s.personalVpn.running && pvErr ? `<p class="err">${escapeHtml(pvErr)}</p>` : ""}
     ${s.personalVpn.configMode === "coexist"
-      ? `<p class="muted">Режим coexist (системный VPN + личный).</p>`
+      ? `<p class="muted">${escapeHtml(routerModeHint("coexist"))}</p>`
       : ""}
     ${s.personalVpn.configStale
       ? `<p class="err">Конфиг sing-box устарел — <strong>выключите и снова включите</strong> личный VPN (сначала системный VPN в GNOME).</p>`
@@ -474,8 +495,8 @@ function renderNodesList(
       });
       showToast("Сервер выбран");
       hidePersonalSetupBanner();
-      await loadSubscriptions();
       await refreshStatus();
+      await loadSubscriptions();
       if (expandedSubId === subId) await expandSubscription(subId, true);
     });
   });
@@ -559,20 +580,62 @@ async function deleteSubscription(id: string, name: string) {
   await refreshStatus();
 }
 
-async function saveSubSettings(id: string, auto: boolean, minutes: number) {
+async function saveSubSettings(id: string, auto: boolean, minutes: number, silent = false) {
+  const mins = Math.min(10080, Math.max(5, minutes || 60));
   await api<Subscription>(`/api/subscriptions/${id}`, {
     method: "PUT",
     body: JSON.stringify({
       autoRefresh: auto,
-      refreshIntervalMinutes: auto ? minutes : 0,
+      refreshIntervalMinutes: auto ? mins : 0,
     }),
   });
-  showToast("Настройки подписки сохранены");
-  await loadSubscriptions();
-  if (expandedSubId === id) await expandSubscription(id, true);
+  if (!silent) {
+    showToast("Настройки подписки сохранены");
+  }
+  const meta = document.querySelector(`[data-meta="${id}"]`);
+  if (meta) {
+    const selectedHint = meta.textContent?.includes("сервер выбран") ? " · сервер выбран" : "";
+    meta.textContent = `${formatRefreshLabel({
+      autoRefresh: auto,
+      refreshIntervalMinutes: auto ? mins : 0,
+    } as Subscription)}${selectedHint}`;
+  }
+  const minsInput = document.querySelector(`[data-mins="${id}"]`) as HTMLInputElement | null;
+  if (minsInput && auto) {
+    minsInput.value = String(mins);
+  }
+}
+
+const subSettingsSaveTimers: Record<string, number> = {};
+
+function scheduleSaveSubSettings(id: string) {
+  window.clearTimeout(subSettingsSaveTimers[id]);
+  subSettingsSaveTimers[id] = window.setTimeout(() => {
+    void persistSubSettings(id);
+  }, 400);
+}
+
+async function persistSubSettings(id: string) {
+  const autoEl = document.querySelector(`[data-auto="${id}"]`) as HTMLInputElement | null;
+  const minsEl = document.querySelector(`[data-mins="${id}"]`) as HTMLInputElement | null;
+  if (!autoEl || !minsEl) return;
+  const auto = autoEl.checked;
+  const mins = parseInt(minsEl.value, 10) || 60;
+  try {
+    await saveSubSettings(id, auto, mins, true);
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : "Не удалось сохранить настройки", true);
+  }
 }
 
 async function loadSubscriptions() {
+  if (!cachedStatus) {
+    try {
+      cachedStatus = await api<StatusResponse>("/api/status");
+    } catch {
+      /* ignore */
+    }
+  }
   const subs = await api<Subscription[]>("/api/subscriptions");
   const box = el<HTMLDivElement>("#subs-list");
   if (!subs.length) {
@@ -581,14 +644,20 @@ async function loadSubscriptions() {
   }
 
   const prevExpanded = expandedSubId;
+  const activeId = cachedStatus?.personalVpn.subscriptionId || "";
+  activeSubId = activeId;
   box.innerHTML = subs
     .map((s) => {
       const expanded = s.id === prevExpanded;
+      const isActive = Boolean(activeId) && s.id === activeId;
       return `
-      <article class="sub-card${expanded ? " is-expanded" : ""}" data-id="${s.id}">
+      <article class="sub-card${expanded ? " is-expanded" : ""}${isActive ? " is-active" : ""}" data-id="${s.id}">
         <div class="sub-header">
           <div class="sub-header-main">
-            <strong>${escapeHtml(s.name)}</strong>
+            <div class="sub-title-row">
+              <strong>${escapeHtml(s.name)}</strong>
+              ${isActive ? `<span class="badge badge-ok">Выбрана</span>` : ""}
+            </div>
             <span class="muted" data-meta="${s.id}">${formatRefreshLabel(s)}${s.selectedNodeId ? " · сервер выбран" : ""}</span>
             <span class="muted" data-node-count="${s.id}"></span>
           </div>
@@ -607,7 +676,6 @@ async function loadSubscriptions() {
             <input type="number" data-mins="${s.id}" min="5" max="10080" value="${s.refreshIntervalMinutes || 60}" ${s.autoRefresh ? "" : "disabled"} />
             мин.
           </label>
-          <button type="button" class="secondary small" data-save="${s.id}">Сохранить</button>
         </div>
         <div class="sub-servers${expanded ? "" : " hidden"}">
           <div class="sub-servers-toolbar">
@@ -654,15 +722,18 @@ async function loadSubscriptions() {
         mins.disabled = true;
         label?.classList.add("is-disabled");
       }
+      void persistSubSettings(id);
     });
   });
 
-  box.querySelectorAll("[data-save]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const id = (btn as HTMLButtonElement).dataset.save!;
-      const auto = (box.querySelector(`[data-auto="${id}"]`) as HTMLInputElement).checked;
-      const mins = parseInt((box.querySelector(`[data-mins="${id}"]`) as HTMLInputElement).value, 10) || 60;
-      await saveSubSettings(id, auto, mins);
+  box.querySelectorAll("[data-mins]").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const id = (inp as HTMLInputElement).dataset.mins!;
+      void persistSubSettings(id);
+    });
+    inp.addEventListener("input", () => {
+      const id = (inp as HTMLInputElement).dataset.mins!;
+      scheduleSaveSubSettings(id);
     });
   });
 
