@@ -64,10 +64,12 @@ This project is indexed by GitNexus as **vpn-router** (594 symbols, 1452 relatio
 ## Self-Check Before Finishing
 
 Before completing any code modification task, verify:
-1. `gitnexus_impact` was run for all modified symbols
-2. No HIGH/CRITICAL risk warnings were ignored
-3. `gitnexus_detect_changes()` confirms changes match expected scope
-4. All d=1 (WILL BREAK) dependents were updated
+1. New/changed logic has unit tests (Go `tests/` and/or desktop Vitest) — see `AGENTS.md` / `.cursor/rules/quality-gate.mdc`
+2. CI-equivalent checks are green: `make check-fmt && make lint && make test` (or `make ci`); fix failures before finishing
+3. `gitnexus_impact` was run for all modified symbols
+4. No HIGH/CRITICAL risk warnings were ignored
+5. `gitnexus_detect_changes()` confirms changes match expected scope
+6. All d=1 (WILL BREAK) dependents were updated
 
 ## Keeping the Index Fresh
 

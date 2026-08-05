@@ -156,7 +156,8 @@ make stop              # тоже гасит sing-box
 5. **Polkit/NM:** изменения в `scripts/` требуют bump stamp в `configure-host-inner.sh`.
 6. **API version:** при ломающих изменениях API — увеличить `apiVersion` в `server.go` и типы в `desktop/src/api.ts`.
 7. Перед рефакторингом — GitNexus `impact` / `context` (см. ниже).
-8. **Линт:** `make lint-tools` один раз, затем `make lint` / `make check-fmt` / `make fmt` / `make test`. CI: `.github/workflows/{lint,format,test}.yml`; clippy — `lint-rust.yml` (только при изменениях `desktop/src-tauri`). Юнит-тесты — в корневом `tests/`. Конфиги: `.golangci.yml`, `desktop/eslint.config.js`, `.editorconfig`.
+8. **Линт / CI:** после правок кода агент **обязан** прогнать `make check-fmt`, `make lint`, `make test` (или `make precommit` / `make ci`) и починить падения. Pre-commit: `make hooks`. Workflows: `.github/workflows/{lint,format,test}.yml`; clippy — `lint-rust.yml` при изменениях Tauri. Юнит-тесты: Go — `tests/`; UI — Vitest в `desktop/`. Конфиги: `.golangci.yml`, `desktop/eslint.config.js`, `.editorconfig`.
+9. **Тесты на логику:** любая новая/изменённая ветвящаяся логика должна получить unit-тесты в той же задаче (см. `.cursor/rules/quality-gate.mdc`).
 
 ### Где искать по задаче
 
@@ -238,6 +239,14 @@ npx gitnexus analyze --embeddings  # сохранить embeddings (если б�
 
 1. Изменения соответствуют трём путям маршрутизации и read-only системному VPN.
 2. Coexist/polkit не сломаны (если трогали `singbox/` или `scripts/`).
-3. `make build` проходит (при изменениях Go).
-4. Для нетривиальных правок — `gitnexus_impact` без игнорирования HIGH/CRITICAL.
-5. Пользователю указаны команды проверки (`make dev`, grep конфига, лог).
+3. Новая/изменённая логика покрыта unit-тестами (Go `tests/` и/или Vitest `desktop/`).
+4. Прогнаны проверки как в CI — **все зелёные** (иначе починить до ответа пользователю):
+
+   ```bash
+   make check-fmt && make lint && make test
+   # или: make precommit / make ci
+   ```
+
+5. При изменениях Go — `make build` проходит.
+6. Для нетривиальных правок — `gitnexus_impact` без игнорирования HIGH/CRITICAL.
+7. Пользователю указаны команды проверки при необходимости (`make dev`, grep конфига, лог).

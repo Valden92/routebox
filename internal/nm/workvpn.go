@@ -56,7 +56,7 @@ func Status(ctx context.Context, connectionID string) SystemVPNStatus {
 		}
 		st.NMState = nmState
 		st.Interface = dev
-		switch classifyNMState(nmState) {
+		switch ClassifyNMState(nmState) {
 		case "connected":
 			st.State = "connected"
 			st.Connected = true
@@ -75,7 +75,7 @@ func Status(ctx context.Context, connectionID string) SystemVPNStatus {
 		if dev, nmState, ok := deviceForConnection(ctx, connectionID); ok {
 			st.NMState = nmState
 			st.Interface = dev
-			switch classifyNMState(nmState) {
+			switch ClassifyNMState(nmState) {
 			case "connected":
 				st.State = "connected"
 				st.Connected = true
@@ -88,7 +88,7 @@ func Status(ctx context.Context, connectionID string) SystemVPNStatus {
 		if tun, nmState, ok := vpnDeviceForConnection(ctx, connectionID); ok {
 			st.Interface = tun
 			st.NMState = nmState
-			switch classifyNMState(nmState) {
+			switch ClassifyNMState(nmState) {
 			case "connected":
 				st.State = "connected"
 				st.Connected = true
@@ -114,12 +114,13 @@ func Status(ctx context.Context, connectionID string) SystemVPNStatus {
 		st.Gateway = tunDefaultGateway(st.Interface)
 	}
 	if vt, err := Run(ctx, "-g", "vpn.service-type", "connection", "show", connectionID); err == nil && vt != "" {
-		st.VpnType = humanVpnType(vt)
+		st.VpnType = HumanVpnType(vt)
 	}
 	return st
 }
 
-func humanVpnType(serviceType string) string {
+// HumanVpnType — короткое имя из vpn.service-type (org…openvpn → OpenVPN).
+func HumanVpnType(serviceType string) string {
 	s := strings.TrimSpace(serviceType)
 	if s == "" {
 		return ""
@@ -162,7 +163,8 @@ func tunDefaultGateway(iface string) string {
 	return ""
 }
 
-func classifyNMState(nmState string) string {
+// ClassifyNMState приводит STATE из nmcli к connected/connecting/disconnected.
+func ClassifyNMState(nmState string) string {
 	s := strings.ToLower(strings.TrimSpace(nmState))
 	if code := parseNMStateCode(s); code >= 0 {
 		switch {
@@ -255,7 +257,7 @@ func firstActiveTun(ctx context.Context) (string, bool) {
 			continue
 		}
 		state = strings.TrimSpace(state)
-		switch classifyNMState(state) {
+		switch ClassifyNMState(state) {
 		case "connected", "connecting":
 			return cand, true
 		}

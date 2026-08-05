@@ -10,7 +10,8 @@ alwaysApply: false
 - Пакеты только в `internal/` (кроме `cmd/`). Linux-специфика — `*_linux.go`, заглушки — `*_stub.go`.
 - Ошибки: оборачивать через `%w`; строки ошибок без заглавной буквы и точки в конце.
 - Системный VPN (`work` / NM): только чтение статуса, без connect/disconnect API.
-- Coexist / `WriteConfig`: после правок — `coexist_linux_test.go` и `config_validate.go`.
+- Coexist / `WriteConfig`: после правок — `coexist_linux_test.go` и `config_validate.go`; плюс общий quality gate (`make check-fmt lint test`).
 - Ломающие изменения HTTP API — bump `apiVersion` в `server.go` и типы в `desktop/src/api.ts`.
 - Минимальный diff; не рефакторить соседний код «заодно».
 - Перед правкой символа — GitNexus `impact` (см. AGENTS.md).
+- Изменённая логика — unit-тест в `tests/` в той же задаче.

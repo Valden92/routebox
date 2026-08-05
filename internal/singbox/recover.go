@@ -49,6 +49,16 @@ func SnapshotWorkVPNRoutes(iface string) {
 
 // routeExcludeAddresses — префиксы, которые sing-box не должен забирать в tun100 (рабочий VPN + LAN).
 func routeExcludeAddresses(workIface string, includeWorkRoutes bool, extraCIDRs []string) []string {
+	include := includeWorkRoutes || workVPNActive(workIface)
+	var workRoutes []string
+	if include {
+		workRoutes = WorkRoutesFromOS(workIface)
+	}
+	return MergeRouteExclude(include, workRoutes, extraCIDRs)
+}
+
+// MergeRouteExclude собирает route_exclude_address без вызовов ip/nm (для тестов и WriteConfig).
+func MergeRouteExclude(includeWorkRoutes bool, workRoutes, extraCIDRs []string) []string {
 	base := []string{
 		"10.0.0.0/8",
 		"127.0.0.0/8",
@@ -58,8 +68,10 @@ func routeExcludeAddresses(workIface string, includeWorkRoutes bool, extraCIDRs 
 		"192.168.0.0/16",
 		"224.0.0.0/4",
 	}
-	if !includeWorkRoutes && !workVPNActive(workIface) {
-		return base
+	if !includeWorkRoutes {
+		out := make([]string, len(base))
+		copy(out, base)
+		return out
 	}
 	seen := make(map[string]bool)
 	var out []string
@@ -73,7 +85,7 @@ func routeExcludeAddresses(workIface string, includeWorkRoutes bool, extraCIDRs 
 	for _, c := range base {
 		add(c)
 	}
-	for _, c := range WorkRoutesFromOS(workIface) {
+	for _, c := range workRoutes {
 		add(c)
 	}
 	for _, c := range extraCIDRs {
