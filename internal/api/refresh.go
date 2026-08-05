@@ -38,7 +38,7 @@ func (r *refreshScheduler) tick() {
 	now := time.Now()
 	for _, sub := range st.Subscriptions {
 		interval := sub.RefreshInterval()
-		if !sub.AutoRefresh || interval <= 0 {
+		if !sub.AutoRefresh || interval <= 0 || !subscription.IsRemoteURL(sub.URL) {
 			continue
 		}
 		if !sub.LastRefresh.IsZero() && now.Sub(sub.LastRefresh) < interval {

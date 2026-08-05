@@ -201,13 +201,27 @@ button.small {
 }
 
 input,
-select {
+select,
+textarea {
   background-color: var(--card);
   border: 1px solid var(--border);
   color: #e8eaed;
   border-radius: 8px;
   padding: 0.45rem 0.65rem;
   font: inherit;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(91, 141, 239, 0.35);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #6b7280;
 }
 
 select {
@@ -228,8 +242,102 @@ select optgroup {
   margin-bottom: 1.25rem;
 }
 
-.sub-form input[name="url"] {
+.sub-source-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.sub-source-tab {
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid #3a404c;
+  background: #1a1d24;
+  color: #c8ccd2;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sub-source-tab.active {
+  border-color: #5b8def;
+  color: #e8eaed;
+  background: #243044;
+}
+
+.sub-source-panel textarea,
+.sub-source-panel input[type="text"],
+.sub-form input[name="url"],
+.sub-form input[name="uri"],
+#add-sub-url,
+#add-sub-uri {
   width: 100%;
+}
+
+.text-import {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  padding: 0.35rem;
+}
+
+.text-import textarea {
+  width: 100%;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 6.5rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.text-import textarea:focus {
+  outline: none;
+  border: none;
+  box-shadow: none;
+}
+
+.text-import:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(91, 141, 239, 0.35);
+}
+
+.check-label.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.file-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.file-picker-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.file-picker-name {
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sub-form-row {

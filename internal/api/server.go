@@ -132,7 +132,7 @@ func (s *Server) routes() {
 	s.router = r
 }
 
-const apiVersion = 4
+const apiVersion = 5
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -141,7 +141,13 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{
 		"apiVersion": apiVersion,
-		"features":   []string{"system-vpn-readonly", "personal-vpn-errors", "sing-box-recover", "auto-routing-observer"},
+		"features": []string{
+			"system-vpn-readonly",
+			"personal-vpn-errors",
+			"sing-box-recover",
+			"auto-routing-observer",
+			"subscription-import",
+		},
 	})
 }
 
@@ -386,6 +392,8 @@ func (s *Server) listSubscriptions(w http.ResponseWriter, _ *http.Request) {
 type addSubReq struct {
 	Name            string `json:"name"`
 	URL             string `json:"url"`
+	Source          string `json:"source"`  // url | text | uri (file на клиенте → text)
+	Content         string `json:"content"` // тело для text/uri
 	RefreshInterval int    `json:"refreshIntervalMinutes"`
 	AutoRefresh     bool   `json:"autoRefresh"`
 }
@@ -396,31 +404,48 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	id := uuid.NewString()
-	mins := 60
-	if req.RefreshInterval > 0 {
-		mins = req.RefreshInterval
-	}
-	if !req.AutoRefresh {
-		mins = 0
-	}
-	sub := config.Subscription{
-		ID:                     id,
-		Name:                   req.Name,
-		URL:                    req.URL,
-		RefreshIntervalMinutes: mins,
-		AutoRefresh:            req.AutoRefresh,
-		Enabled:                true,
-	}
-	_ = s.Store.Update(func(st *config.Settings) {
-		st.Subscriptions = append(st.Subscriptions, sub)
-	})
-	ctx := r.Context()
-	body, err := subscription.Fetch(ctx, req.URL)
-	if err != nil {
-		http.Error(w, err.Error(), 502)
+	req.Name = strings.TrimSpace(req.Name)
+	req.URL = strings.TrimSpace(req.URL)
+	req.Content = strings.TrimSpace(req.Content)
+	req.Source = strings.ToLower(strings.TrimSpace(req.Source))
+	if req.Name == "" {
+		http.Error(w, "укажите название", 400)
 		return
 	}
+	if req.Source == "" {
+		if req.Content != "" {
+			req.Source = "text"
+		} else {
+			req.Source = "url"
+		}
+	}
+
+	var body []byte
+	switch req.Source {
+	case "url":
+		if !subscription.IsRemoteURL(req.URL) {
+			http.Error(w, "укажите HTTP(S) URL подписки", 400)
+			return
+		}
+		fetched, err := subscription.Fetch(r.Context(), req.URL)
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		body = fetched
+	case "text", "uri", "file":
+		if req.Content == "" {
+			http.Error(w, "вставьте содержимое подписки или share-ссылку", 400)
+			return
+		}
+		body = []byte(req.Content)
+		req.URL = ""
+		req.AutoRefresh = false
+	default:
+		http.Error(w, "неизвестный source (url|text|uri)", 400)
+		return
+	}
+
 	nodes, err := subscription.ParseBody(body)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
@@ -431,8 +456,36 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "в подписке не найдено серверов (vless/vmess/…)", 400)
 		return
 	}
+
+	id := uuid.NewString()
+	mins := 60
+	if req.RefreshInterval > 0 {
+		mins = req.RefreshInterval
+	}
+	if !req.AutoRefresh || !subscription.IsRemoteURL(req.URL) {
+		mins = 0
+		req.AutoRefresh = false
+	}
+	sub := config.Subscription{
+		ID:                     id,
+		Name:                   req.Name,
+		URL:                    req.URL,
+		RefreshIntervalMinutes: mins,
+		AutoRefresh:            req.AutoRefresh,
+		Enabled:                true,
+		LastRefresh:            time.Now(),
+	}
+	if err := s.Store.Update(func(st *config.Settings) {
+		st.Subscriptions = append(st.Subscriptions, sub)
+	}); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	st := s.Store.Get()
-	_ = subscription.SaveCache(st.DataDir, id, nodes)
+	if err := subscription.SaveCache(st.DataDir, id, nodes); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	writeJSON(w, sub)
 }
 
@@ -448,6 +501,10 @@ func (s *Server) refreshSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	if sub == nil {
 		http.Error(w, "not found", 404)
+		return
+	}
+	if !subscription.IsRemoteURL(sub.URL) {
+		http.Error(w, "локальный импорт нельзя обновить по сети — добавьте URL или импортируйте заново", 400)
 		return
 	}
 	body, err := subscription.Fetch(r.Context(), sub.URL)
@@ -508,6 +565,9 @@ func (s *Server) loadNodes(r *http.Request, id string, st config.Settings) ([]su
 	if sub == nil {
 		return nil, os.ErrNotExist
 	}
+	if !subscription.IsRemoteURL(sub.URL) {
+		return nil, fmt.Errorf("локальный импорт: кэш узлов пуст — импортируйте подписку заново")
+	}
 	body, err := subscription.Fetch(r.Context(), sub.URL)
 	if err != nil {
 		return nil, err
@@ -541,6 +601,12 @@ func (s *Server) updateSubscription(w http.ResponseWriter, r *http.Request) {
 			if st.Subscriptions[i].ID != id {
 				continue
 			}
+			remote := subscription.IsRemoteURL(st.Subscriptions[i].URL)
+			if !remote {
+				st.Subscriptions[i].AutoRefresh = false
+				st.Subscriptions[i].RefreshIntervalMinutes = 0
+				return
+			}
 			if req.AutoRefresh != nil {
 				st.Subscriptions[i].AutoRefresh = *req.AutoRefresh
 				if !*req.AutoRefresh {
@@ -553,6 +619,7 @@ func (s *Server) updateSubscription(w http.ResponseWriter, r *http.Request) {
 			if st.Subscriptions[i].AutoRefresh && st.Subscriptions[i].RefreshIntervalMinutes <= 0 {
 				st.Subscriptions[i].RefreshIntervalMinutes = 60
 			}
+			return
 		}
 	})
 	if err != nil {
