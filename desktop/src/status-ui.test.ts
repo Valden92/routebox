@@ -93,9 +93,9 @@ describe("personalStatusFlags", () => {
 });
 
 describe("isDaemonApiOutdated", () => {
-  it("requires apiVersion >= 4", () => {
+  it("requires apiVersion >= 5", () => {
     expect(isDaemonApiOutdated(undefined)).toBe(true);
-    expect(isDaemonApiOutdated(3)).toBe(true);
-    expect(isDaemonApiOutdated(4)).toBe(false);
+    expect(isDaemonApiOutdated(4)).toBe(true);
+    expect(isDaemonApiOutdated(5)).toBe(false);
   });
 });

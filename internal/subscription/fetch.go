@@ -7,10 +7,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 func Fetch(ctx context.Context, subURL string) ([]byte, error) {
+	if !IsRemoteURL(subURL) {
+		return nil, fmt.Errorf("нет HTTP(S) URL для обновления")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subURL, nil)
 	if err != nil {
 		return nil, err
@@ -27,6 +31,12 @@ func Fetch(ctx context.Context, subURL string) ([]byte, error) {
 		return nil, fmt.Errorf("subscription HTTP %d", resp.StatusCode)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+}
+
+// IsRemoteURL — подписку можно обновлять по сети.
+func IsRemoteURL(u string) bool {
+	u = strings.TrimSpace(u)
+	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
 }
 
 func SaveCache(dataDir, subscriptionID string, nodes []Node) error {

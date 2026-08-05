@@ -171,6 +171,69 @@ func TestSubscriptionCRUDAndSelect(t *testing.T) {
 	}
 }
 
+func TestAddSubscriptionTextAndURI(t *testing.T) {
+	ts, store, _ := newAPITest(t)
+	uri := "vless://cccccccc-cccc-cccc-cccc-cccccccccccc@inline.example.com:443?encryption=none&security=tls#Inline"
+
+	code, raw := doJSON(t, ts, http.MethodPost, "/api/subscriptions/", map[string]any{
+		"name": "from-uri", "source": "uri", "content": uri, "autoRefresh": true,
+	})
+	if code != 200 {
+		t.Fatalf("uri: %d %s", code, raw)
+	}
+	var sub config.Subscription
+	if err := json.Unmarshal(raw, &sub); err != nil {
+		t.Fatal(err)
+	}
+	if sub.URL != "" || sub.AutoRefresh {
+		t.Fatalf("local must not refresh: %+v", sub)
+	}
+	code, raw = doJSON(t, ts, http.MethodGet, "/api/subscriptions/"+sub.ID+"/nodes", nil)
+	if code != 200 {
+		t.Fatalf("nodes: %d %s", code, raw)
+	}
+	var nodes []subscription.Node
+	_ = json.Unmarshal(raw, &nodes)
+	if len(nodes) != 1 || nodes[0].Host != "inline.example.com" {
+		t.Fatalf("%+v", nodes)
+	}
+
+	code, raw = doJSON(t, ts, http.MethodPost, "/api/subscriptions/"+sub.ID+"/refresh", nil)
+	if code != 400 {
+		t.Fatalf("refresh local want 400, got %d %s", code, raw)
+	}
+
+	plain := uri + "\nvless://dddddddd-dddd-dddd-dddd-dddddddddddd@text.example.com:443?encryption=none#TextNode\n"
+	code, raw = doJSON(t, ts, http.MethodPost, "/api/subscriptions/", map[string]any{
+		"name": "from-text", "source": "text", "content": plain,
+	})
+	if code != 200 {
+		t.Fatalf("text: %d %s", code, raw)
+	}
+	_ = json.Unmarshal(raw, &sub)
+	code, raw = doJSON(t, ts, http.MethodGet, "/api/subscriptions/"+sub.ID+"/nodes", nil)
+	if code != 200 {
+		t.Fatalf("text nodes: %d %s", code, raw)
+	}
+	_ = json.Unmarshal(raw, &nodes)
+	if len(nodes) != 2 {
+		t.Fatalf("want 2, got %+v", nodes)
+	}
+	if len(store.Get().Subscriptions) != 2 {
+		t.Fatalf("%+v", store.Get().Subscriptions)
+	}
+}
+
+func TestAddSubscriptionRejectsEmpty(t *testing.T) {
+	ts, _, _ := newAPITest(t)
+	code, _ := doJSON(t, ts, http.MethodPost, "/api/subscriptions/", map[string]any{
+		"name": "x", "source": "text", "content": "",
+	})
+	if code != 400 {
+		t.Fatalf("want 400, got %d", code)
+	}
+}
+
 func TestAddSubscriptionBadBody(t *testing.T) {
 	ts, _, _ := newAPITest(t)
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -182,6 +245,16 @@ func TestAddSubscriptionBadBody(t *testing.T) {
 	})
 	if code != 400 && code != 502 {
 		t.Fatalf("want 400/502, got %d", code)
+	}
+	// orphan subscription must not be left after failed parse
+	code, raw := doJSON(t, ts, http.MethodGet, "/api/subscriptions/", nil)
+	if code != 200 {
+		t.Fatalf("%d %s", code, raw)
+	}
+	var list []config.Subscription
+	_ = json.Unmarshal(raw, &list)
+	if len(list) != 0 {
+		t.Fatalf("orphan after bad body: %+v", list)
 	}
 }
 

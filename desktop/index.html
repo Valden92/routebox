@@ -51,8 +51,41 @@
         <div id="personal-setup-banner" class="banner hidden" role="alert"></div>
         <form id="form-add-sub" class="sub-form">
           <input name="name" placeholder="Название" required />
-          <input name="url" placeholder="URL подписки" required />
-          <div class="sub-form-row">
+          <div class="sub-source-tabs" role="tablist" aria-label="Способ добавления">
+            <button type="button" class="sub-source-tab active" data-source="url">URL</button>
+            <button type="button" class="sub-source-tab" data-source="text">Текст</button>
+            <button type="button" class="sub-source-tab" data-source="uri">Ссылка</button>
+            <button type="button" class="sub-source-tab" data-source="file">Файл</button>
+          </div>
+          <div class="sub-source-panel" data-panel="url">
+            <input name="url" id="add-sub-url" placeholder="https://… URL подписки" />
+          </div>
+          <div class="sub-source-panel hidden" data-panel="text">
+            <div class="text-import">
+              <textarea
+                name="content"
+                id="add-sub-content"
+                rows="5"
+                placeholder="Список vless://… / ss://… или base64 целиком"
+              ></textarea>
+            </div>
+          </div>
+          <div class="sub-source-panel hidden" data-panel="uri">
+            <input name="uri" id="add-sub-uri" placeholder="vless://… или hy2://…" />
+          </div>
+          <div class="sub-source-panel hidden" data-panel="file">
+            <div class="file-picker">
+              <input
+                type="file"
+                id="add-sub-file"
+                class="file-picker-input"
+                accept=".txt,.conf,.base64,text/plain"
+              />
+              <button type="button" class="secondary" id="add-sub-file-btn">Выбрать файл</button>
+              <span class="muted file-picker-name" id="add-sub-file-name">файл не выбран</span>
+            </div>
+          </div>
+          <div class="sub-form-row" id="add-refresh-row">
             <label class="check-label">
               <input type="checkbox" name="autoRefresh" id="add-auto-refresh" checked />
               Автообновление
@@ -71,7 +104,7 @@
             </label>
             <button type="submit">Добавить</button>
           </div>
-          <p class="muted sub-form-hint">
+          <p class="muted sub-form-hint" id="add-sub-hint">
             Снимите галочку — обновлять подписку только кнопкой «Обновить».
           </p>
         </form>

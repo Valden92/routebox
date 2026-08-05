@@ -9,6 +9,18 @@ import (
 	"github.com/Valden92/routebox/internal/subscription"
 )
 
+func TestIsRemoteURL(t *testing.T) {
+	if !subscription.IsRemoteURL("https://example.com/sub") {
+		t.Fatal("https")
+	}
+	if !subscription.IsRemoteURL(" http://example.com ") {
+		t.Fatal("http")
+	}
+	if subscription.IsRemoteURL("") || subscription.IsRemoteURL("vless://x") {
+		t.Fatal("local")
+	}
+}
+
 func TestParseBodyPlainLines(t *testing.T) {
 	body := []byte("" +
 		"# comment\n" +

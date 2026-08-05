@@ -13,6 +13,11 @@ import {
   type StatusResponse,
   type Subscription,
 } from "./api";
+import {
+  buildAddSubscriptionBody,
+  isRemoteSubscriptionUrl,
+  type SubImportSource,
+} from "./add-subscription";
 import { formatPing } from "./ping-label";
 import { orderNodes } from "./nodes-sort";
 import {
@@ -295,6 +300,43 @@ function syncAddRefreshInputs() {
   }
 }
 
+function currentAddSource(): SubImportSource {
+  const active = document.querySelector(".sub-source-tab.active") as HTMLButtonElement | null;
+  return (active?.dataset.source as SubImportSource) || "url";
+}
+
+function setAddSource(source: SubImportSource) {
+  document.querySelectorAll(".sub-source-tab").forEach((btn) => {
+    btn.classList.toggle("active", (btn as HTMLButtonElement).dataset.source === source);
+  });
+  document.querySelectorAll(".sub-source-panel").forEach((panel) => {
+    const elPanel = panel as HTMLElement;
+    elPanel.classList.toggle("hidden", elPanel.dataset.panel !== source);
+  });
+  const refreshRow = el("#add-refresh-row");
+  const hint = el("#add-sub-hint");
+  const remote = source === "url";
+  refreshRow.querySelectorAll("input").forEach((inp) => {
+    (inp as HTMLInputElement).disabled = !remote;
+  });
+  el<HTMLInputElement>("#add-auto-refresh")
+    .closest(".check-label")
+    ?.classList.toggle("is-disabled", !remote);
+  el<HTMLInputElement>("#add-refresh-minutes")
+    .closest(".interval-label")
+    ?.classList.toggle(
+      "is-disabled",
+      !remote || !el<HTMLInputElement>("#add-auto-refresh").checked,
+    );
+  if (remote) {
+    hint.textContent = "Снимите галочку — обновлять подписку только кнопкой «Обновить».";
+    syncAddRefreshInputs();
+  } else {
+    hint.textContent =
+      "Локальный импорт: автообновление недоступно. Чтобы обновлять по сети — добавьте URL.";
+  }
+}
+
 let activeSubId = "";
 let expandedSubId = "";
 let cachedStatus: StatusResponse | null = null;
@@ -572,7 +614,7 @@ async function loadSubscriptions() {
   const subs = await api<Subscription[]>("/api/subscriptions");
   const box = el<HTMLDivElement>("#subs-list");
   if (!subs.length) {
-    box.innerHTML = '<p class="muted">Подписок нет. Добавьте URL.</p>';
+    box.innerHTML = '<p class="muted">Подписок нет. Добавьте URL, текст, ссылку или файл.</p>';
     return;
   }
 
@@ -583,6 +625,8 @@ async function loadSubscriptions() {
     .map((s) => {
       const expanded = s.id === prevExpanded;
       const isActive = Boolean(activeId) && s.id === activeId;
+      const remote = isRemoteSubscriptionUrl(s.url);
+      const refreshMeta = remote ? formatRefreshLabel(s) : "локальный импорт";
       return `
       <article class="sub-card${expanded ? " is-expanded" : ""}${isActive ? " is-active" : ""}" data-id="${s.id}">
         <div class="sub-header">
@@ -590,8 +634,9 @@ async function loadSubscriptions() {
             <div class="sub-title-row">
               <strong>${escapeHtml(s.name)}</strong>
               ${isActive ? `<span class="badge badge-ok">Выбрана</span>` : ""}
+              ${!remote ? `<span class="badge">Локально</span>` : ""}
             </div>
-            <span class="muted" data-meta="${s.id}">${formatRefreshLabel(s)}${s.selectedNodeId ? " · сервер выбран" : ""}</span>
+            <span class="muted" data-meta="${s.id}">${refreshMeta}${s.selectedNodeId ? " · сервер выбран" : ""}</span>
             <span class="muted" data-node-count="${s.id}"></span>
           </div>
           <div class="sub-header-actions">
@@ -600,19 +645,23 @@ async function loadSubscriptions() {
           </div>
         </div>
         <div class="sub-settings" data-id="${s.id}">
-          <label class="check-label">
-            <input type="checkbox" data-auto="${s.id}" ${s.autoRefresh ? "checked" : ""} />
+          <label class="check-label${!remote ? " is-disabled" : ""}">
+            <input type="checkbox" data-auto="${s.id}" ${s.autoRefresh && remote ? "checked" : ""} ${remote ? "" : "disabled"} />
             Авто
           </label>
-          <label class="interval-label">
+          <label class="interval-label${!remote || !s.autoRefresh ? " is-disabled" : ""}">
             каждые
-            <input type="number" data-mins="${s.id}" min="5" max="10080" value="${s.refreshIntervalMinutes || 60}" ${s.autoRefresh ? "" : "disabled"} />
+            <input type="number" data-mins="${s.id}" min="5" max="10080" value="${s.refreshIntervalMinutes || 60}" ${remote && s.autoRefresh ? "" : "disabled"} />
             мин.
           </label>
         </div>
         <div class="sub-servers${expanded ? "" : " hidden"}">
           <div class="sub-servers-toolbar">
-            <button type="button" class="secondary" data-refresh="${s.id}">Обновить подписку</button>
+            ${
+              remote
+                ? `<button type="button" class="secondary" data-refresh="${s.id}">Обновить подписку</button>`
+                : ""
+            }
             <button type="button" data-ping="${s.id}">Проверить пинг</button>
             ${nodeSortSelectHtml(s.id)}
           </div>
@@ -959,31 +1008,65 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   el("#add-auto-refresh").addEventListener("change", syncAddRefreshInputs);
-  syncAddRefreshInputs();
+  document.querySelectorAll(".sub-source-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setAddSource(((btn as HTMLButtonElement).dataset.source as SubImportSource) || "url");
+    });
+  });
+  setAddSource("url");
+
+  const fileInput = el<HTMLInputElement>("#add-sub-file");
+  const fileName = el("#add-sub-file-name");
+  const resetFilePicker = () => {
+    fileInput.value = "";
+    fileName.textContent = "файл не выбран";
+  };
+  el("#add-sub-file-btn").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    const name = fileInput.files?.[0]?.name;
+    fileName.textContent = name || "файл не выбран";
+  });
 
   el("#form-add-sub").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const fd = new FormData(e.target as HTMLFormElement);
-    const btn = (e.target as HTMLFormElement).querySelector(
-      'button[type="submit"]',
-    ) as HTMLButtonElement;
+    const form = e.target as HTMLFormElement;
+    const fd = new FormData(form);
+    const btn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+    const source = currentAddSource();
     const auto = fd.get("autoRefresh") === "on";
     const mins = parseInt(String(fd.get("refreshMinutes") || "60"), 10) || 60;
-    (btn as HTMLButtonElement).disabled = true;
+    let content = "";
+    if (source === "text") {
+      content = String(fd.get("content") || "");
+    } else if (source === "uri") {
+      content = String(fd.get("uri") || el<HTMLInputElement>("#add-sub-uri").value || "");
+    } else if (source === "file") {
+      const file = el<HTMLInputElement>("#add-sub-file").files?.[0];
+      if (!file) {
+        showToast("Выберите файл подписки", true);
+        return;
+      }
+      content = await file.text();
+    }
+    const body = buildAddSubscriptionBody({
+      name: String(fd.get("name") || ""),
+      source,
+      url: String(fd.get("url") || ""),
+      content,
+      autoRefresh: auto,
+      refreshIntervalMinutes: mins,
+    });
+    btn.disabled = true;
     try {
       const sub = await api<Subscription>("/api/subscriptions", {
         method: "POST",
-        body: JSON.stringify({
-          name: fd.get("name"),
-          url: fd.get("url"),
-          autoRefresh: auto,
-          refreshIntervalMinutes: auto ? mins : 0,
-        }),
+        body: JSON.stringify(body),
       });
-      (e.target as HTMLFormElement).reset();
+      form.reset();
+      resetFilePicker();
       el<HTMLInputElement>("#add-auto-refresh").checked = true;
       el<HTMLInputElement>("#add-refresh-minutes").value = "60";
-      syncAddRefreshInputs();
+      setAddSource("url");
       expandedSubId = sub.id;
       await loadSubscriptions();
       await expandSubscription(sub.id, true);
@@ -991,7 +1074,7 @@ window.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Ошибка", true);
     } finally {
-      (btn as HTMLButtonElement).disabled = false;
+      btn.disabled = false;
     }
   });
 
