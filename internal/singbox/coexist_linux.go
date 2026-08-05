@@ -63,19 +63,7 @@ func systemVPNDNS(iface string) string {
 	if err != nil {
 		return ""
 	}
-	for line := range strings.SplitSeq(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
-		for _, f := range fields {
-			if strings.Count(f, ".") == 3 && !strings.Contains(f, ":") {
-				return f
-			}
-		}
-	}
-	return ""
+	return ParseResolvectlDNS(string(out))
 }
 
 func systemVPNEndpointCIDRs(st config.Settings) []string {
@@ -89,7 +77,7 @@ func systemVPNEndpointCIDRs(st config.Settings) []string {
 	if err != nil || strings.TrimSpace(data) == "" {
 		return nil
 	}
-	hosts := parseVPNRemoteHosts(data)
+	hosts := ParseVPNRemoteHosts(data)
 	seen := map[string]struct{}{}
 	var cidrs []string
 	for _, host := range hosts {
@@ -125,7 +113,8 @@ func systemVPNEndpointCIDRs(st config.Settings) []string {
 	return cidrs
 }
 
-func parseVPNRemoteHosts(data string) []string {
+// ParseVPNRemoteHosts извлекает host'ы из nmcli vpn.data (ключ remote = …).
+func ParseVPNRemoteHosts(data string) []string {
 	const key = "remote = "
 	start := strings.Index(data, key)
 	if start < 0 {
@@ -154,4 +143,21 @@ func parseVPNRemoteHosts(data string) []string {
 		}
 	}
 	return hosts
+}
+
+// ParseResolvectlDNS берёт первый IPv4 из вывода `resolvectl dns <iface>`.
+func ParseResolvectlDNS(output string) string {
+	for line := range strings.SplitSeq(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		for _, f := range fields {
+			if strings.Count(f, ".") == 3 && !strings.Contains(f, ":") {
+				return f
+			}
+		}
+	}
+	return ""
 }

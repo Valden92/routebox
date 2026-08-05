@@ -418,6 +418,11 @@ func parseSingBoxLogLine(line string) string {
 	return strings.TrimSpace(line)
 }
 
+// ParseSingBoxLogLine вытаскивает текст FATAL/ERROR из строки лога sing-box.
+func ParseSingBoxLogLine(line string) string {
+	return parseSingBoxLogLine(line)
+}
+
 func isGenericExit(msg string) bool {
 	return strings.HasPrefix(msg, "exit status ")
 }
@@ -440,6 +445,11 @@ func resolveErrorMessage(raw, logHint string) string {
 		return "Нет прав на TUN — выполните: make sync, затем снова «Включить»"
 	}
 	return msg
+}
+
+// ResolveErrorMessage нормализует ошибку старта sing-box для UI.
+func ResolveErrorMessage(raw, logHint string) string {
+	return resolveErrorMessage(raw, logHint)
 }
 
 func validateConfigIfChanged(bin, cfgPath string) error {

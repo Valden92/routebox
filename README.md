@@ -112,9 +112,13 @@ make recover-network
 | `make check-fmt` | проверка формата (gofmt / Prettier / rustfmt) |
 | `make fmt` | автоформат |
 | `make test` | `go test ./tests/... ./internal/...` |
+| `make hooks` | включить git pre-commit (формат + линт + тесты) |
+| `make precommit` | то же вручную |
 
 CI (GitHub Actions): параллельно **Lint**, **Format**, **Test** на push/PR  
 (`.github/workflows/lint.yml`, `format.yml`, `test.yml`). Clippy — `lint-rust.yml` только при изменениях Tauri.
+
+Pre-commit: `.githooks/pre-commit` → `make check-fmt lint test`. Включается через `make hooks` или `make sync`. Пропуск: `SKIP_PRECOMMIT=1 git commit …`.
 
 Юнит-тесты живут в корневом `tests/` (black-box по пакетам). Package-local `*_test.go` — исключение (доступ к unexported).
 

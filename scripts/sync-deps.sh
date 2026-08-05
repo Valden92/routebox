@@ -177,6 +177,17 @@ sync_cargo() {
   ok "cargo crates"
 }
 
+sync_githooks() {
+  if [[ -d "$ROOT/.git" ]] && [[ -f "$ROOT/.githooks/pre-commit" ]]; then
+    log "git hooks"
+    chmod +x "$ROOT/.githooks/pre-commit"
+    git -C "$ROOT" config core.hooksPath .githooks
+    ok "core.hooksPath=.githooks"
+  else
+    skip "git hooks (нет .git или .githooks)"
+  fi
+}
+
 main() {
   log "sync: проверка окружения"
   ensure_go
@@ -188,6 +199,7 @@ main() {
   sync_go_modules
   sync_npm
   sync_cargo
+  sync_githooks
   echo ""
   echo "sync: готово"
 }

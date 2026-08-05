@@ -14,33 +14,27 @@ import {
   type Subscription,
 } from "./api";
 import { formatPing } from "./ping-label";
+import { orderNodes } from "./nodes-sort";
+import {
+  filterRules,
+  formatRefreshLabel,
+  partitionDomainRules,
+  rulesDataSignature,
+} from "./rules-util";
+import {
+  isDaemonApiOutdated,
+  personalConnectGate,
+  personalStatusFlags,
+  systemVpnConnectingHint,
+  systemVpnState,
+} from "./status-ui";
+import { escapeHtml, routerModeHint, routerModeLabel, routerPriorityLabel } from "./ui-labels";
 
 const pathLabels: Record<RoutePath, string> = {
   direct: "Без VPN",
   work: "Системный VPN",
   personal: "Личный VPN",
 };
-
-function routerModeLabel(mode?: string): string {
-  if (mode === "coexist") {
-    return "Совместно с системным VPN";
-  }
-  return "Обычный";
-}
-
-function routerModeHint(mode?: string): string {
-  if (mode === "coexist") {
-    return "Системный VPN активен: рабочие сайты идут через него, остальное — по правилам или напрямую.";
-  }
-  return "Системный VPN выключен: трафик идёт напрямую или через личный VPN по правилам.";
-}
-
-function routerPriorityLabel(mode?: string): string {
-  if (mode === "coexist") {
-    return "Обычная сеть > Системный VPN > Личный VPN";
-  }
-  return "Обычная сеть > Личный VPN";
-}
 
 function el<T extends HTMLElement>(sel: string): T {
   return document.querySelector(sel) as T;
@@ -50,19 +44,11 @@ function badge(ok: boolean, on: string, off: string) {
   return `<span class="badge ${ok ? "badge-ok" : "badge-err"}">${ok ? on : off}</span>`;
 }
 
-function systemVpnState(
-  s: StatusResponse["systemVpn"],
-): "disconnected" | "connecting" | "connected" {
-  if (s.state) return s.state;
-  return s.connected ? "connected" : "disconnected";
-}
-
 function systemVpnBadge(s: StatusResponse["systemVpn"]) {
   const st = systemVpnState(s);
   if (st === "connected") return badge(true, "Подключён", "Отключён");
   if (st === "connecting") {
-    const hint = s.nmState && /need|auth/i.test(s.nmState) ? "Ожидание MFA" : "Подключение…";
-    return `<span class="badge badge-warn">${hint}</span>`;
+    return `<span class="badge badge-warn">${systemVpnConnectingHint(s.nmState)}</span>`;
   }
   return badge(false, "Подключён", "Отключён");
 }
@@ -92,14 +78,6 @@ function showPersonalSetupBanner(message: string) {
 
 function hidePersonalSetupBanner() {
   el("#personal-setup-banner").classList.add("hidden");
-}
-
-function escapeHtml(s: string) {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 function openModal(title: string, bodyHtml: string) {
@@ -239,7 +217,8 @@ function updatePersonalVpnButtons(configured: boolean, running: boolean) {
 async function refreshStatus() {
   const s = await api<StatusResponse>("/api/status");
   cachedStatus = s;
-  const ready = s.personalVpn.configured ?? false;
+  const flags = personalStatusFlags(s.personalVpn);
+  const ready = flags.configured;
   el("#card-internet .card-body").innerHTML = `
     ${badge(s.internet.up, "OK", "Нет")}
     <dl>
@@ -285,36 +264,22 @@ async function refreshStatus() {
     ${cfgBadge}
     <p>${escapeHtml(s.personalVpn.subscriptionName || "—")}</p>
     ${!ready && s.personalVpn.message ? `<p class="muted">${escapeHtml(s.personalVpn.message)}</p>` : ""}
-    ${s.personalVpn.hostConfigured === false ? `<p class="err">Выполните в терминале: <code>make sync</code></p>` : ""}
+    ${flags.showHostSyncHint ? `<p class="err">Выполните в терминале: <code>make sync</code></p>` : ""}
     ${s.personalVpn.routingRunning && !s.personalVpn.running && pvErr ? `<p class="err">${escapeHtml(pvErr)}</p>` : ""}
+    ${flags.showCoexistHint ? `<p class="muted">${escapeHtml(routerModeHint("coexist"))}</p>` : ""}
     ${
-      s.personalVpn.configMode === "coexist"
-        ? `<p class="muted">${escapeHtml(routerModeHint("coexist"))}</p>`
-        : ""
-    }
-    ${
-      s.personalVpn.configStale
+      flags.showConfigStale
         ? `<p class="err">Конфиг sing-box устарел — <strong>выключите и снова включите</strong> личный VPN (сначала системный VPN в GNOME).</p>`
         : ""
     }
     ${
-      s.personalVpn.running &&
-      s.personalVpn.configFileMode === "full" &&
-      s.personalVpn.systemVpnActive
+      flags.showPolkitAuthHint
         ? `<p class="muted">Без <code>make sync</code> (polkit v6) при включении могут всплывать окна «Authentication» — их можно закрыть; после sync не должны.</p>`
         : ""
     }
   `;
   updatePersonalVpnButtons(ready, s.personalVpn.running);
   if (ready) hidePersonalSetupBanner();
-}
-
-function formatRefreshLabel(sub: Subscription): string {
-  if (!sub.autoRefresh) return "обновление вручную";
-  const m = sub.refreshIntervalMinutes || 60;
-  if (m < 60) return `авто каждые ${m} мин.`;
-  if (m % 60 === 0) return `авто каждые ${m / 60} ч.`;
-  return `авто каждые ${m} мин.`;
 }
 
 function syncAddRefreshInputs() {
@@ -393,61 +358,6 @@ function cacheSubNodes(
   nodesCache.set(subId, nodes);
   pingsCache.set(subId, pings);
   if (sub) subsByIdCache.set(subId, sub);
-}
-
-function compareNodesByPing(a: Node, b: Node, pingMap: Map<string, PingResult>): number {
-  const pa = pingMap.get(a.id);
-  const pb = pingMap.get(b.id);
-  if (!pa?.ok && !pb?.ok) return a.name.localeCompare(b.name, "ru");
-  if (pa?.ok && !pb?.ok) return -1;
-  if (!pa?.ok && pb?.ok) return 1;
-  return (pa?.latencyMs ?? 9999) - (pb?.latencyMs ?? 9999);
-}
-
-function compareNodesByFrequent(a: Node, b: Node, selectCounts: Record<string, number>): number {
-  const ca = selectCounts[a.id] ?? 0;
-  const cb = selectCounts[b.id] ?? 0;
-  if (cb !== ca) return cb - ca;
-  return a.name.localeCompare(b.name, "ru");
-}
-
-function sortNodes(
-  nodes: Node[],
-  mode: NodeSortMode,
-  pingMap: Map<string, PingResult>,
-  selectCounts: Record<string, number>,
-): Node[] {
-  const sorted = [...nodes];
-  switch (mode) {
-    case "name-desc":
-      sorted.sort((a, b) => b.name.localeCompare(a.name, "ru"));
-      break;
-    case "ping":
-      sorted.sort((a, b) => compareNodesByPing(a, b, pingMap));
-      break;
-    case "frequent":
-      sorted.sort((a, b) => compareNodesByFrequent(a, b, selectCounts));
-      break;
-    default:
-      sorted.sort((a, b) => a.name.localeCompare(b.name, "ru"));
-  }
-  return sorted;
-}
-
-function orderNodes(
-  nodes: Node[],
-  selectedNodeId: string | undefined,
-  sortMode: NodeSortMode,
-  pingMap: Map<string, PingResult>,
-  selectCounts: Record<string, number>,
-): Node[] {
-  if (!selectedNodeId) {
-    return sortNodes(nodes, sortMode, pingMap, selectCounts);
-  }
-  const selected = nodes.find((n) => n.id === selectedNodeId);
-  const rest = nodes.filter((n) => n.id !== selectedNodeId);
-  const sortedRest = sortNodes(rest, sortMode, pingMap, selectCounts);
-  return selected ? [selected, ...sortedRest] : sortedRest;
 }
 
 function resolveSelectedNodeId(subId: string, sub?: Subscription): string | undefined {
@@ -907,13 +817,6 @@ let rulesLoadInFlight = false;
 let rulesSignature = "";
 let cachedRulesData: RulesResponse | null = null;
 
-function rulesDataSignature(data: RulesResponse): string {
-  return JSON.stringify({
-    domains: data.domains ?? [],
-    apps: data.apps ?? [],
-  });
-}
-
 function rulesTabActive(): boolean {
   return document.querySelector("#tab-rules")?.classList.contains("active") ?? false;
 }
@@ -922,17 +825,11 @@ function currentRulesSearch(): string {
   return el<HTMLInputElement>("#rules-search").value.trim().toLowerCase();
 }
 
-function filterRules(rules: DomainRule[], query: string): DomainRule[] {
-  if (!query) return rules;
-  return rules.filter((r) => r.pattern.toLowerCase().includes(query));
-}
-
 function renderRules(data: RulesResponse) {
   const domains = data.domains ?? [];
   const query = currentRulesSearch();
   const filteredDomains = filterRules(domains, query);
-  const autoRules = filteredDomains.filter((r) => (r.source || "manual") === "auto");
-  const manualRules = filteredDomains.filter((r) => (r.source || "manual") !== "auto");
+  const { auto: autoRules, manual: manualRules } = partitionDomainRules(filteredDomains);
   const autoList = el<HTMLElement>("#auto-rules-list");
   const manualList = el<HTMLElement>("#manual-rules-list");
   const suffix = query ? ` по запросу «${escapeHtml(query)}»` : "";
@@ -991,7 +888,7 @@ async function pingApi(): Promise<boolean> {
 async function checkApiVersion() {
   try {
     const ver = await api<{ apiVersion?: number }>("/api/version");
-    if ((ver.apiVersion ?? 0) < 4) {
+    if (isDaemonApiOutdated(ver.apiVersion)) {
       showToast("Демон устарел — закройте приложение и запустите: make stop && make dev", true);
     }
   } catch {
@@ -1012,11 +909,12 @@ window.addEventListener("DOMContentLoaded", () => {
 
   el("#btn-personal-on").addEventListener("click", async () => {
     const ready = await getPersonalReadiness();
-    if (!ready.configured) {
-      if (ready.reason === "host_not_ready") {
-        showToast(ready.message ?? "Выполните: make sync", true);
-        return;
-      }
+    const gate = personalConnectGate(ready);
+    if (gate === "host_not_ready") {
+      showToast(ready.message ?? "Выполните: make sync", true);
+      return;
+    }
+    if (gate === "setup") {
       goToPersonalSetup(ready.message ?? "Добавьте подписку и выберите сервер");
       return;
     }

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Pre-commit: формат → линт → тесты (как CI Format + Lint + Test).
+# Пропуск: SKIP_PRECOMMIT=1 git commit ...
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+if [[ "${SKIP_PRECOMMIT:-}" == "1" ]]; then
+	echo "pre-commit: пропуск (SKIP_PRECOMMIT=1)"
+	exit 0
+fi
+
+export PATH="${HOME}/.local/go/bin:${HOME}/go/bin:${HOME}/.cargo/bin:${HOME}/.local/bin:${PATH:-}"
+
+echo "==> pre-commit: check-fmt"
+make check-fmt
+
+echo "==> pre-commit: lint"
+make lint
+
+echo "==> pre-commit: test"
+make test
+
+echo "pre-commit: ok"

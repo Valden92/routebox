@@ -15,7 +15,7 @@ SYNC_SCRIPT  := $(ROOT)/scripts/sync-deps.sh
 
 .PHONY: all dev run build sidecar daemon daemon-fg desktop sync stop restart clean help \
 	install-sing-box setcap-sing-box configure-host recover-network deps deps-apt sync-go sync-node sync-rust \
-	lint lint-go lint-ui lint-rust fmt fmt-go fmt-ui fmt-rust check-fmt test lint-tools
+	lint lint-go lint-ui lint-rust fmt fmt-go fmt-ui fmt-rust check-fmt test lint-tools hooks precommit
 
 .DEFAULT_GOAL := dev
 
@@ -95,8 +95,13 @@ lint-tools:
 
 lint: lint-go lint-ui
 
-test:
+test: test-go test-ui
+
+test-go:
 	cd $(ROOT) && $(GO) test ./tests/... ./internal/...
+
+test-ui:
+	cd $(ROOT)/desktop && npm test
 
 lint-go:
 	@command -v golangci-lint >/dev/null || { echo "run: make lint-tools"; exit 1; }
@@ -130,10 +135,23 @@ fmt-ui:
 fmt-rust:
 	cd $(ROOT)/desktop/src-tauri && cargo fmt
 
+## Git hooks: core.hooksPath → .githooks (pre-commit: check-fmt + lint + test)
+hooks:
+	@chmod +x $(ROOT)/.githooks/pre-commit
+	@git -C $(ROOT) config core.hooksPath .githooks
+	@echo "git hooks: core.hooksPath=.githooks (pre-commit → make check-fmt lint test)"
+
+## То же, что pre-commit hook / CI Format+Lint+Test (гонять вручную и агентам)
+precommit: check-fmt lint test
+ci: precommit
+
 help:
 	@echo "Router BOX"
 	@echo ""
 	@echo "  make sync     — зависимости + setcap/NM для личного VPN (sudo при первом разе)"
+	@echo "  make hooks    — включить git pre-commit (формат + линт + тесты)"
+	@echo "  make precommit — check-fmt + lint + test (как хук / CI)"
+	@echo "  make ci       — алиас make precommit"
 	@echo "  make dev      — сборка + демон + Tauri (личный VPN без пароля в UI)"
 	@echo "  make dev-full — sync + dev (рекомендуется новому пользователю)"
 	@echo "  make daemon   — только API http://$(API_ADDR)"
@@ -144,7 +162,8 @@ help:
 	@echo "  make lint-rust — clippy (Tauri; тяжёлый, в CI отдельно по paths)"
 	@echo "  make check-fmt — проверка формата (gofmt / Prettier / rustfmt)"
 	@echo "  make fmt      — автоформат Go / Prettier+ESLint / rustfmt"
-	@echo "  make test     — go test ./tests/... ./internal/..."
+	@echo "  make test     — Go tests + Vitest (desktop)"
+	@echo "  make test-go / test-ui — по отдельности"
 	@echo "  make lint-tools — поставить golangci-lint и npm lint deps"
 	@echo "  make configure-host — повторить настройку TUN/NM (обычно не нужно после sync)"
 	@echo "  make recover-network — если пропал интернет после личного VPN"
