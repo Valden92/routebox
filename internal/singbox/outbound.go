@@ -28,6 +28,11 @@ func uriToOutbound(node subscription.Node) (map[string]any, error) {
 	}
 }
 
+// URIToOutbound строит outbound sing-box из RawURI узла (для тестов и отладки).
+func URIToOutbound(node subscription.Node) (map[string]any, error) {
+	return uriToOutbound(node)
+}
+
 func vlessOutbound(tag string, u *url.URL) (map[string]any, error) {
 	q := u.Query()
 	port := u.Port()

@@ -30,11 +30,12 @@ func ValidateWrittenConfig(path string, st config.Settings) error {
 	if err != nil {
 		return err
 	}
+	return ValidateConfigBytes(b, systemVPNUp(st))
+}
+
+// ValidateConfigBytes проверяет содержимое sing-box.json при известном sysUp (удобно для тестов).
+func ValidateConfigBytes(b []byte, sysUp bool) error {
 	var raw struct {
-		Route struct {
-			Rules []map[string]any `json:"rules"`
-		} `json:"route"`
-		Inbounds  []map[string]any `json:"inbounds"`
 		Outbounds []struct {
 			Tag string `json:"tag"`
 		} `json:"outbounds"`
@@ -43,8 +44,6 @@ func ValidateWrittenConfig(path string, st config.Settings) error {
 		return fmt.Errorf("sing-box.json: %w", err)
 	}
 	body := string(b)
-	sysUp := systemVPNUp(st)
-
 	hasHijack := strings.Contains(body, "hijack-dns")
 	hasCoexist := strings.Contains(body, "exclude_interface") &&
 		strings.Contains(body, "route_address")
