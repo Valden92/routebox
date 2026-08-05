@@ -55,6 +55,18 @@ func NewServer(store *config.Store, sb *singbox.Manager) *Server {
 	return s
 }
 
+// NewTestServer — HTTP API без фоновых воркеров и автозапуска router (для unit/httptest).
+func NewTestServer(store *config.Store, sb *singbox.Manager) *Server {
+	s := &Server{
+		Store:         store,
+		SingBox:       sb,
+		refresh:       newRefreshScheduler(store),
+		observedHosts: map[string]time.Time{},
+	}
+	s.routes()
+	return s
+}
+
 func (s *Server) Handler() http.Handler { return s.router }
 
 func (s *Server) shouldStartRouterOnLaunch() bool {

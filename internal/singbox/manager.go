@@ -367,6 +367,11 @@ func pathTagIfAvailable(p config.RoutePath, personalAvailable, workAvailable boo
 	}
 }
 
+// PathTagIfAvailable — outbound tag для правила, если путь доступен.
+func PathTagIfAvailable(p config.RoutePath, personalAvailable, workAvailable bool) (string, bool) {
+	return pathTagIfAvailable(p, personalAvailable, workAvailable)
+}
+
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func stripANSI(s string) string {
