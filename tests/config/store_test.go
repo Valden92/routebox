@@ -42,10 +42,11 @@ func TestStoreSaveLoadPlain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Update(func(st *config.Settings) {
+	err = store.Update(func(st *config.Settings) {
 		st.MainInterface = "eth0"
 		st.PersonalVPN.Enabled = true
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,19 +82,20 @@ func TestStoreLockUnlockRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Update(func(st *config.Settings) {
+	err = store.Update(func(st *config.Settings) {
 		st.MainInterface = "secret-iface"
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	pass := "test-passphrase-ok"
-	if err := store.Lock(pass); err != nil {
+	if err = store.Lock(pass); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "settings.json.enc")); err != nil {
+	if _, err = os.Stat(filepath.Join(dir, "settings.json.enc")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "settings.json")); !os.IsNotExist(err) {
+	if _, err = os.Stat(filepath.Join(dir, "settings.json")); !os.IsNotExist(err) {
 		t.Fatalf("plain should be removed: %v", err)
 	}
 
@@ -101,10 +103,10 @@ func TestStoreLockUnlockRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store2.TryLoad(); !os.IsNotExist(err) {
+	if err = store2.TryLoad(); !os.IsNotExist(err) {
 		t.Fatalf("TryLoad want ErrNotExist for enc, got %v", err)
 	}
-	if err := store2.Unlock(pass); err != nil {
+	if err = store2.Unlock(pass); err != nil {
 		t.Fatal(err)
 	}
 	if store2.Get().MainInterface != "secret-iface" {
@@ -118,7 +120,7 @@ func TestStoreUnlockBadPassphrase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Lock("correct-horse"); err != nil {
+	if err = store.Lock("correct-horse"); err != nil {
 		t.Fatal(err)
 	}
 	store2, err := config.NewStore(dir)
@@ -126,7 +128,7 @@ func TestStoreUnlockBadPassphrase(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store2.TryLoad()
-	if err := store2.Unlock("wrong"); err == nil {
+	if err = store2.Unlock("wrong"); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -137,7 +139,7 @@ func TestStoreLockEmptyPassphrase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Lock(""); err == nil {
+	if err = store.Lock(""); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -148,10 +150,10 @@ func TestTryLoadPlain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SavePlain(); err != nil {
+	if err = store.SavePlain(); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.TryLoad(); err != nil {
+	if err = store.TryLoad(); err != nil {
 		t.Fatal(err)
 	}
 }

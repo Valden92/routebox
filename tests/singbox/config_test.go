@@ -67,10 +67,10 @@ func TestURIToOutboundUnsupported(t *testing.T) {
 
 func TestPathTagIfAvailable(t *testing.T) {
 	cases := []struct {
-		path               config.RoutePath
-		personal, work     bool
-		wantTag            string
-		wantOK             bool
+		path           config.RoutePath
+		personal, work bool
+		wantTag        string
+		wantOK         bool
 	}{
 		{config.RouteDirect, false, false, "direct", true},
 		{config.RoutePersonal, true, false, "proxy", true},
