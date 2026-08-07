@@ -28,6 +28,9 @@ func TestOpenvpnEndpointRequiresAuth(t *testing.T) {
 	if ep["type"] != "openvpn-client" || ep["tag"] != "proxy" || ep["system"] != false {
 		t.Fatalf("%v", ep)
 	}
+	if ep["mtu"] != tunMTU {
+		t.Fatalf("mtu %v want %d", ep["mtu"], tunMTU)
+	}
 	if ep["username"] != "u" || ep["password"] != "p" {
 		t.Fatalf("creds %v", ep)
 	}
