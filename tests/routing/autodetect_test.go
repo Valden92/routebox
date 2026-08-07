@@ -114,3 +114,21 @@ func TestFilterRules(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestCollapseDomainRulesPrefersManual(t *testing.T) {
+	rules := []config.DomainRule{
+		{ID: "1", Pattern: "chatgpt.com", Path: config.RouteDirect, Source: "auto", Enabled: true},
+		{ID: "2", Pattern: "chatgpt.com", Path: config.RoutePersonal, Source: "manual", Enabled: true},
+		{ID: "3", Pattern: "other.com", Path: config.RouteDirect, Source: "auto", Enabled: true},
+	}
+	got := routing.CollapseDomainRules(rules)
+	if len(got) != 2 {
+		t.Fatalf("len %d %+v", len(got), got)
+	}
+	if got[0].ID != "2" || got[0].Path != config.RoutePersonal || got[0].Source != "manual" {
+		t.Fatalf("chatgpt %+v", got[0])
+	}
+	if got[1].ID != "3" {
+		t.Fatalf("other %+v", got[1])
+	}
+}

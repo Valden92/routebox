@@ -200,19 +200,9 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 	if personalAvailable {
 		dnsServers = append(dnsServers, dnsTLSServer("dns-proxy", "1.1.1.1", "proxy"))
 	}
-	dnsRules := []map[string]any{
-		{"domain_suffix": []string{".ru", ".рф"}, "server": "dns-direct"},
-	}
 	sysUp := systemVPNUp(st)
 	sysIface := systemTunIface(st)
-	if sysUp {
-		if corpDNS := systemVPNDNS(sysIface); corpDNS != "" {
-			dnsServers = append(dnsServers, dnsUDPServer("dns-work", corpDNS, "work"))
-		}
-		dnsRules = append([]map[string]any{
-			{"domain_suffix": routing.DefaultCorpSuffixes(), "server": "dns-work"},
-		}, dnsRules...)
-	}
+	dnsRules := buildDNSRules(st, personalAvailable, sysUp, sysIface, &dnsServers)
 	routeExclude := routeExcludeAddresses(sysIface, sysUp, systemVPNEndpointCIDRs(st))
 	tunInbound := map[string]any{
 		"type":                  "tun",
@@ -344,6 +334,55 @@ func proxyBypassRules(node subscription.Node) []map[string]any {
 	}}
 }
 
+func buildDNSRules(st config.Settings, personalAvailable, sysUp bool, sysIface string, dnsServers *[]map[string]any) []map[string]any {
+	var rules []map[string]any
+	if personalAvailable {
+		for _, r := range routing.CollapseDomainRules(enabledDomainRules(st.DomainRules)) {
+			if r.Path != config.RoutePersonal {
+				continue
+			}
+			rules = append(rules, domainMatchRule(r.Pattern, map[string]any{"server": "dns-proxy"}))
+		}
+	}
+	if sysUp {
+		if corpDNS := systemVPNDNS(sysIface); corpDNS != "" {
+			*dnsServers = append(*dnsServers, dnsUDPServer("dns-work", corpDNS, "work"))
+		}
+		rules = append(rules, map[string]any{
+			"domain_suffix": routing.DefaultCorpSuffixes(),
+			"server":        "dns-work",
+		})
+	}
+	rules = append(rules, map[string]any{
+		"domain_suffix": []string{".ru", ".рф"},
+		"server":        "dns-direct",
+	})
+	return rules
+}
+
+func enabledDomainRules(rules []config.DomainRule) []config.DomainRule {
+	out := make([]config.DomainRule, 0, len(rules))
+	for _, r := range rules {
+		if r.Enabled {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func domainMatchRule(pattern string, base map[string]any) map[string]any {
+	rule := make(map[string]any, len(base)+1)
+	for k, v := range base {
+		rule[k] = v
+	}
+	if stringsHasPrefix(pattern, "*.") {
+		rule["domain_suffix"] = []string{stringsTrimPrefix(pattern, "*.")}
+	} else {
+		rule["domain"] = []string{pattern}
+	}
+	return rule
+}
+
 func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, sysIface string) map[string]any {
 	personalAvailable := st.PersonalVPN.Enabled && node != nil
 	rules := []map[string]any{
@@ -368,21 +407,12 @@ func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, sysIfac
 			})
 		}
 	}
-	for _, r := range st.DomainRules {
-		if !r.Enabled {
-			continue
-		}
+	for _, r := range routing.CollapseDomainRules(enabledDomainRules(st.DomainRules)) {
 		tag, ok := pathTagIfAvailable(r.Path, personalAvailable, sysUp)
 		if !ok {
 			continue
 		}
-		rule := map[string]any{"outbound": tag}
-		if stringsHasPrefix(r.Pattern, "*.") {
-			rule["domain_suffix"] = []string{stringsTrimPrefix(r.Pattern, "*.")}
-		} else {
-			rule["domain"] = []string{r.Pattern}
-		}
-		rules = append(rules, rule)
+		rules = append(rules, domainMatchRule(r.Pattern, map[string]any{"outbound": tag}))
 	}
 	for _, a := range st.AppRules {
 		if !a.Enabled || a.ProcessName == "" {

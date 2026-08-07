@@ -359,15 +359,32 @@ func TestRulesCRUD(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("add: %d %s", code, raw)
 	}
-	var added map[string]string
+	var added map[string]any
 	_ = json.Unmarshal(raw, &added)
-	id := added["id"]
+	id, _ := added["id"].(string)
 	if id == "" {
 		t.Fatal("no id")
 	}
 	rules := store.Get().DomainRules
 	if len(rules) != 1 || rules[0].Pattern != "music.yandex.ru" || rules[0].Path != config.RouteDirect {
 		t.Fatalf("%+v", rules)
+	}
+
+	// Повторное добавление того же домена — upsert, без дубликата.
+	code, raw = doJSON(t, ts, http.MethodPost, "/api/rules/", map[string]any{
+		"pattern": "music.yandex.ru",
+		"path":    "personal",
+	})
+	if code != 200 {
+		t.Fatalf("upsert: %d %s", code, raw)
+	}
+	_ = json.Unmarshal(raw, &added)
+	if added["id"] != id {
+		t.Fatalf("expected same id %s got %v", id, added["id"])
+	}
+	rules = store.Get().DomainRules
+	if len(rules) != 1 || rules[0].Path != config.RoutePersonal || rules[0].Source != "manual" {
+		t.Fatalf("upsert result %+v", rules)
 	}
 
 	code, raw = doJSON(t, ts, http.MethodGet, "/api/rules/", nil)

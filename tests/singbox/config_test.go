@@ -192,6 +192,73 @@ func TestWriteRouterConfigWithoutPersonal(t *testing.T) {
 	}
 }
 
+func TestWriteRouterConfigPersonalRulesAndDNS(t *testing.T) {
+	dir := t.TempDir()
+	st := config.DefaultSettings(dir)
+	st.SystemVPN.NMConnectionID = "PTsecurity-nonexistent-ci-test"
+	st.PersonalVPN.Enabled = true
+	st.MainInterface = "lo"
+	st.DomainRules = []config.DomainRule{
+		{ID: "a", Pattern: "chatgpt.com", Path: config.RouteDirect, Source: "auto", Enabled: true},
+		{ID: "b", Pattern: "chatgpt.com", Path: config.RoutePersonal, Source: "manual", Enabled: true},
+		{ID: "c", Pattern: "*.youtube.com", Path: config.RoutePersonal, Source: "manual", Enabled: true},
+	}
+	node := subscription.Node{
+		Host:   "node.example.com",
+		Port:   443,
+		RawURI: "vless://aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa@node.example.com:443?encryption=none&security=tls&sni=node.example.com#T",
+	}
+	path := filepath.Join(dir, "sing-box.json")
+	if err := singbox.WriteRouterConfig(path, &node, st, "tun100"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	dns := cfg["dns"].(map[string]any)
+	dnsRules := dns["rules"].([]any)
+	foundProxyDNS := false
+	for _, item := range dnsRules {
+		m := item.(map[string]any)
+		if m["server"] != "dns-proxy" {
+			continue
+		}
+		foundProxyDNS = true
+		if dom, ok := m["domain"].([]any); ok {
+			if len(dom) != 1 || dom[0] != "chatgpt.com" {
+				t.Fatalf("dns domain %+v", m)
+			}
+		}
+	}
+	if !foundProxyDNS {
+		t.Fatalf("dns-proxy rule missing: %+v", dnsRules)
+	}
+	route := cfg["route"].(map[string]any)
+	routeRules := route["rules"].([]any)
+	chatgptProxy := 0
+	chatgptDirect := 0
+	for _, item := range routeRules {
+		m := item.(map[string]any)
+		dom, _ := m["domain"].([]any)
+		if len(dom) == 1 && dom[0] == "chatgpt.com" {
+			switch m["outbound"] {
+			case "proxy":
+				chatgptProxy++
+			case "direct":
+				chatgptDirect++
+			}
+		}
+	}
+	if chatgptProxy != 1 || chatgptDirect != 0 {
+		t.Fatalf("chatgpt rules proxy=%d direct=%d", chatgptProxy, chatgptDirect)
+	}
+}
+
 func mustWrite(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {

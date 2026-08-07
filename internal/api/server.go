@@ -813,22 +813,40 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := uuid.NewString()
-	_ = s.Store.Update(func(st *config.Settings) {
+	err := s.Store.Update(func(st *config.Settings) {
 		if req.ProcessName != "" {
 			st.AppRules = append(st.AppRules, config.AppRule{
 				ID: id, ProcessName: req.ProcessName, Path: req.Path, Enabled: true,
 			})
-		} else {
-			pattern := routing.NormalizeRulePattern(req.Pattern)
-			if pattern == "" {
-				pattern = req.Pattern
-			}
-			st.DomainRules = append(st.DomainRules, config.DomainRule{
-				ID: id, Pattern: pattern, Path: req.Path, Source: "manual", Enabled: true, CreatedAt: time.Now(),
-			})
+			return
 		}
+		pattern := routing.NormalizeRulePattern(req.Pattern)
+		if pattern == "" {
+			pattern = req.Pattern
+		}
+		if idx := routing.FindDomainRuleIndex(st.DomainRules, pattern); idx >= 0 {
+			st.DomainRules[idx].Pattern = pattern
+			st.DomainRules[idx].Path = req.Path
+			st.DomainRules[idx].Source = "manual"
+			st.DomainRules[idx].Enabled = true
+			st.DomainRules[idx].LastError = ""
+			id = st.DomainRules[idx].ID
+			return
+		}
+		st.DomainRules = append(st.DomainRules, config.DomainRule{
+			ID: id, Pattern: pattern, Path: req.Path, Source: "manual", Enabled: true, CreatedAt: time.Now(),
+		})
 	})
-	writeJSON(w, map[string]string{"id": id})
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	reapplied, err := s.reapplyPersonalIfRunning(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "reapply_failed", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"id": id, "reapplied": reapplied})
 }
 
 type updateRuleReq struct {
@@ -895,11 +913,19 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	_ = s.Store.Update(func(st *config.Settings) {
+	if err := s.Store.Update(func(st *config.Settings) {
 		st.DomainRules = routing.FilterDomainRules(st.DomainRules, id)
 		st.AppRules = routing.FilterAppRules(st.AppRules, id)
-	})
-	writeJSON(w, map[string]string{"status": "deleted"})
+	}); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	reapplied, err := s.reapplyPersonalIfRunning(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "reapply_failed", err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"status": "deleted", "reapplied": reapplied})
 }
 
 type suggestReq struct {
