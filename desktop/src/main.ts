@@ -455,9 +455,10 @@ function renderNodeRow(
   const sel = isSelected ? " is-selected" : "";
   const picks = selectCounts[n.id] ?? 0;
   const picksLabel = sortMode === "frequent" && picks > 0 ? ` · ${picks}×` : "";
+  const net = n.protocol === "openvpn" && n.network ? `/${n.network}` : "";
   return `<li class="${sel}">
     <span>${escapeHtml(n.name)}</span>
-    <small>${n.protocol} · ${n.host}:${n.port}${ping ? ` · ${ping}` : ""}${picksLabel}</small>
+    <small>${escapeHtml(n.protocol)}${escapeHtml(net)} · ${escapeHtml(n.host)}:${n.port}${ping ? ` · ${ping}` : ""}${picksLabel}</small>
     <button type="button" data-select="${n.id}" class="${isSelected ? "secondary" : ""}">${isSelected ? "✓ Выбран" : "Выбрать"}</button>
   </li>`;
 }

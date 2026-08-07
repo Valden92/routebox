@@ -101,6 +101,7 @@ export interface Node {
   protocol: string;
   host: string;
   port: number;
+  network?: string;
 }
 
 export interface PingResult {

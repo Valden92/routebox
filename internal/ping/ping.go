@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os/exec"
+	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,7 +38,7 @@ func TCPBatch(ctx context.Context, iface string, nodes []subscription.Node, conc
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i] = tcpOne(ctx, iface, n)
+			results[i] = probeOne(ctx, iface, n)
 		}(i, n)
 	}
 	wg.Wait()
@@ -46,6 +50,35 @@ func TCPBatch(ctx context.Context, iface string, nodes []subscription.Node, conc
 	})
 	return results
 }
+
+// ProbeMode — как проверять доступность узла.
+func ProbeMode(n subscription.Node) string {
+	if strings.EqualFold(n.Protocol, "openvpn") {
+		netw := strings.ToLower(strings.TrimSpace(n.Network))
+		if netw == "tcp" {
+			return "tcp"
+		}
+		// UDP OpenVPN: порт не слушает TCP; сырой UDP без tls-auth HMAC молчит.
+		// Проверяем ICMP до host (как «жив ли сервер»).
+		return "icmp"
+	}
+	return "tcp"
+}
+
+func probeOne(ctx context.Context, iface string, n subscription.Node) Result {
+	switch ProbeMode(n) {
+	case "icmp":
+		return icmpPingFn(ctx, iface, n)
+	default:
+		return tcpDialFn(ctx, iface, n)
+	}
+}
+
+// Хуки для тестов (подмена dial/ping без сети).
+var (
+	tcpDialFn  = tcpOne
+	icmpPingFn = icmpOne
+)
 
 func tcpOne(ctx context.Context, iface string, n subscription.Node) Result {
 	r := Result{NodeID: n.ID, Host: n.Host, Port: n.Port}
@@ -63,5 +96,42 @@ func tcpOne(ctx context.Context, iface string, n subscription.Node) Result {
 	}
 	_ = conn.Close()
 	r.OK = true
+	return r
+}
+
+var pingTimeRe = regexp.MustCompile(`(?i)time[=<]([\d.]+)\s*ms`)
+
+func icmpOne(ctx context.Context, iface string, n subscription.Node) Result {
+	r := Result{NodeID: n.ID, Host: n.Host, Port: n.Port}
+	if n.Host == "" {
+		r.Error = "empty host"
+		return r
+	}
+	args := []string{"-c", "1", "-W", "2"}
+	if iface != "" {
+		args = append(args, "-I", iface)
+	}
+	args = append(args, n.Host)
+	cmd := exec.CommandContext(ctx, "ping", args...)
+	start := time.Now()
+	out, err := cmd.CombinedOutput()
+	elapsed := float64(time.Since(start).Milliseconds())
+	if err != nil {
+		r.LatencyMs = elapsed
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		r.Error = msg
+		return r
+	}
+	r.OK = true
+	if m := pingTimeRe.FindSubmatch(out); len(m) == 2 {
+		if ms, err := strconv.ParseFloat(string(m[1]), 64); err == nil {
+			r.LatencyMs = ms
+			return r
+		}
+	}
+	r.LatencyMs = elapsed
 	return r
 }
