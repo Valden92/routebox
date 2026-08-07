@@ -34,6 +34,94 @@ PKG_CONFIG_CHECKS=(
 log() { echo "==> $*"; }
 ok()  { echo "    OK: $*"; }
 skip() { echo "    skip: $*"; }
+fail() { echo "ERROR: $*" >&2; }
+
+# То, что пользователь/ОС должны дать до настройки Router BOX (sync сам это не ставит).
+check_prerequisites() {
+  local errors=0
+  log "предусловия (до настройки Router BOX)"
+
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    fail "нужен Linux (сейчас: $(uname -s)). macOS/Windows не поддерживаются."
+    errors=1
+  else
+    ok "Linux"
+  fi
+
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck source=/dev/null
+    . /etc/os-release
+    ok "дистрибутив: ${PRETTY_NAME:-$ID}"
+  fi
+
+  if ! command -v nmcli >/dev/null 2>&1; then
+    fail "не найден nmcli — установите NetworkManager (пакет network-manager)."
+    errors=1
+  else
+    ok "nmcli"
+    if systemctl is-active --quiet NetworkManager 2>/dev/null || \
+       systemctl is-active --quiet NetworkManager.service 2>/dev/null; then
+      ok "NetworkManager активен"
+    elif pgrep -x NetworkManager >/dev/null 2>&1; then
+      ok "NetworkManager запущен"
+    else
+      fail "NetworkManager не запущен. Включите: systemctl enable --now NetworkManager"
+      errors=1
+    fi
+  fi
+
+  if ! command -v resolvectl >/dev/null 2>&1; then
+    fail "не найден resolvectl — нужен systemd-resolved (для DNS в режиме coexist)."
+    errors=1
+  else
+    ok "resolvectl"
+  fi
+
+  if [[ ! -d /etc/polkit-1 ]]; then
+    fail "не найден polkit (/etc/polkit-1) — установите polkit; без него личный VPN будет запрашивать пароль."
+    errors=1
+  else
+    ok "polkit"
+  fi
+
+  if ! command -v ip >/dev/null 2>&1; then
+    fail "не найден ip (iproute2)."
+    errors=1
+  else
+    ok "iproute2"
+  fi
+
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    fail "нужен Node.js 20+ в PATH (https://nodejs.org или nvm). sync его не ставит."
+    errors=1
+  else
+    local major
+    major=$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)
+    if [[ "$major" -lt 20 ]]; then
+      fail "Node.js ${major} слишком старый — нужен 20+ (сейчас: $(node --version))."
+      errors=1
+    else
+      ok "node $(node --version), npm $(npm --version)"
+    fi
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    fail "нужен sudo — первый sync ставит пакеты и настраивает setcap/polkit/NM."
+    errors=1
+  else
+    if sudo -n true 2>/dev/null; then
+      ok "sudo (без повторного пароля в этой сессии)"
+    else
+      ok "sudo доступен (при настройке хоста/apt может запросить пароль)"
+    fi
+  fi
+
+  if [[ "$errors" -ne 0 ]]; then
+    echo "" >&2
+    fail "предусловия не выполнены — устраните ошибки выше и снова запустите: make sync"
+    exit 1
+  fi
+}
 
 have_pkg_config() {
   local name=$1
@@ -81,12 +169,8 @@ ensure_rust() {
 }
 
 ensure_node() {
-  if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
-    ok "node $(node --version), npm $(npm --version)"
-    return
-  fi
-  echo "ERROR: Node.js/npm не найдены. Установите Node 20+ (https://nodejs.org или nvm)." >&2
-  exit 1
+  # Версия уже проверена в check_prerequisites; здесь только подтверждение для лога этапа.
+  ok "node $(node --version), npm $(npm --version)"
 }
 
 ensure_system() {
@@ -190,6 +274,7 @@ sync_githooks() {
 
 main() {
   log "sync: проверка окружения"
+  check_prerequisites
   ensure_go
   ensure_rust
   ensure_node
@@ -203,5 +288,12 @@ main() {
   echo ""
   echo "sync: готово"
 }
+
+# Только предусловия (без установки пакетов / настройки хоста).
+if [[ "${1:-}" == "--check-prereqs" ]]; then
+  check_prerequisites
+  echo "предусловия: OK"
+  exit 0
+fi
 
 main "$@"

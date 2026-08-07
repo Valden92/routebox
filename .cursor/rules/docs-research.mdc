@@ -1,0 +1,11 @@
+---
+description: Продуктовые заметки и research (3x-ui и др.) — куда смотреть
+globs: "docs/**/*.md"
+alwaysApply: false
+---
+
+# Docs / research
+
+- Клиентские идеи из 3x-ui и план внедрения: `docs/research/3x-ui-client-ideas.md`.
+- Канвас-обзор в Cursor: `3x-ui-feature-study` (не заменяет markdown в git).
+- При реализации пункта из research — тесты + `make ci` (см. `quality-gate.mdc`).

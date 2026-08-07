@@ -12,6 +12,7 @@
 make sync      # зависимости + setcap sing-box + polkit v6 + NM drop-in (sudo при первом разе)
 make dev       # сборка демона + Tauri UI
 make stop      # остановить демон и sing-box
+make reset-host # сбросить хост-настройку; затем снова make sync
 ```
 
 - API: `http://127.0.0.1:47891`
@@ -169,6 +170,7 @@ make stop              # тоже гасит sing-box
 | UI карточки | `desktop/src/main.ts`, `desktop/index.html` |
 | Подписки/узлы | `internal/subscription/`, `internal/api/server.go` |
 | Пинг без work VPN | `internal/ping/`, `internal/network/bind_linux.go` |
+| Идеи фич из 3x-ui (клиент) | `docs/research/3x-ui-client-ideas.md` |
 
 ---
 
