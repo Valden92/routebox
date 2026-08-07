@@ -7,6 +7,21 @@ echo "Останавливаем sing-box…"
 killall sing-box 2>/dev/null || pkill -x sing-box 2>/dev/null || true
 sleep 1
 
+# Залипшие ip rule/table sing-box (дефолт 2022/9000 и Router BOX 20221/9210).
+# Без CAP_NET_ADMIN часть команд no-op — тогда: sudo ip rule / make sync после setcap.
+for table in 20221 2022; do
+  ip route flush table "$table" 2>/dev/null || true
+done
+while read -r line; do
+  prio="${line%%:*}"
+  case "$prio" in
+    ''|*[!0-9]*) continue ;;
+  esac
+  if (( prio >= 9000 && prio < 9100 )) || (( prio >= 9210 && prio <= 9250 )); then
+    ip rule del priority "$prio" 2>/dev/null || true
+  fi
+done < <(ip rule show 2>/dev/null || true)
+
 GW="$(ip -4 route show default 2>/dev/null | awk -v d="$IFACE" '$0 ~ "dev " d {print $3; exit}')"
 if [[ -z "$GW" ]]; then
   GW="$(ip -4 route show dev "$IFACE" 2>/dev/null | awk '/^default / {print $3; exit}')"

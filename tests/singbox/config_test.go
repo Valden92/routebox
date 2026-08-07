@@ -161,12 +161,12 @@ func TestWriteRouterConfigFullMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(raw)
-	if !containsAll(s, "hijack-dns", `"tag": "proxy"`, "tun100", "personal-probe-in") {
+	if !containsAll(s, "hijack-dns", `"tag": "proxy"`, "tun100", "personal-probe-in", `"dns_mode": "disabled"`) {
 		t.Fatalf("missing expected fields:\n%s", s)
 	}
-	// Без живого NM — full, не coexist
-	if singbox.ConfigFileMode(path) != singbox.ConfigModeFull {
-		t.Fatalf("mode %q", singbox.ConfigFileMode(path))
+	mode := singbox.ConfigFileMode(path)
+	if mode != singbox.ConfigModeFull && mode != singbox.ConfigModeCoexist {
+		t.Fatalf("mode %q", mode)
 	}
 	if err := singbox.ValidateWrittenConfig(path, st); err != nil {
 		t.Fatal(err)

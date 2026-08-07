@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-VER="${SING_BOX_VERSION:-1.11.7}"
+VER="${SING_BOX_VERSION:-1.14.0-beta.9}"
 ARCH="linux-amd64"
 DEST="${HOME}/.local/bin/sing-box"
 URL="https://github.com/SagerNet/sing-box/releases/download/v${VER}/sing-box-${VER}-${ARCH}.tar.gz"

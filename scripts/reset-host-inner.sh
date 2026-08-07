@@ -27,6 +27,17 @@ if [[ -n "$DEST" && -e "$DEST" ]]; then
   getcap "$DEST" 2>/dev/null || echo "(no capabilities)"
 fi
 
+NETCLEAN="${VPN_ROUTER_NETCLEAN_DEST:-}"
+if [[ -z "$NETCLEAN" && -n "${SUDO_USER:-}" ]]; then
+  uhome=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+  NETCLEAN="${uhome}/.local/bin/vpn-router-netclean"
+fi
+if [[ -n "$NETCLEAN" && -e "$NETCLEAN" ]]; then
+  setcap -r "$NETCLEAN" 2>/dev/null || true
+  rm -f "$NETCLEAN" 2>/dev/null || true
+  echo "removed $NETCLEAN"
+fi
+
 if [[ -n "${SUDO_USER:-}" ]]; then
   uhome=$(getent passwd "$SUDO_USER" | cut -d: -f6)
   if [[ -n "$uhome" ]]; then

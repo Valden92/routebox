@@ -90,6 +90,8 @@ func (m *Manager) Start(_ context.Context) error {
 		m.lastError = err.Error()
 		return err
 	}
+	// Убрать залипшие ip rule/table после аварийного stop (иначе: add rule … file exists).
+	CleanupStaleTUNRules()
 	// Не привязываем к HTTP-запросу: иначе процесс умирает после ответа API
 	m.cmd = exec.Command(bin, "run", "-c", m.cfgPath)
 	logFile, err := os.OpenFile(m.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -147,10 +149,13 @@ func (m *Manager) Stop() error {
 	_ = proc.Signal(syscall.SIGTERM)
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		_ = proc.Kill()
 		<-done
 	}
+	// Дать ядру/sing-box снять ip rule после close TUN.
+	time.Sleep(500 * time.Millisecond)
+	CleanupStaleTUNRules()
 
 	m.mu.Lock()
 	m.running = false
@@ -168,23 +173,32 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 	if tunName == "" {
 		tunName = "tun100"
 	}
-	var outbound map[string]any
 	personalAvailable := st.PersonalVPN.Enabled && node != nil
+	var outbound map[string]any
+	var endpoint map[string]any
 	if personalAvailable {
-		var err error
-		outbound, err = uriToOutbound(*node)
-		if err != nil {
-			return err
+		switch strings.ToLower(node.Protocol) {
+		case "openvpn":
+			ep, err := openvpnEndpoint("proxy", *node)
+			if err != nil {
+				return err
+			}
+			endpoint = ep
+		default:
+			o, err := uriToOutbound(*node)
+			if err != nil {
+				return err
+			}
+			outbound = o
 		}
 	}
-	// Маршрут к IP/домену VPN-сервера — в route.rules (proxyBypassRules), не dialer (нет в 1.11).
-	// Не используем address "local" — иначе systemd-resolved → 127.0.0.1:53 и всё падает.
-	// DoT вместо tcp:// — стабильнее; cache_capacity снижает «dns: bad rdata» на hijack.
+	// DNS schema 1.12+: typed servers (не legacy address).
+	// Не используем server "local" — иначе systemd-resolved → 127.0.0.1:53.
 	dnsServers := []map[string]any{
-		{"tag": "dns-direct", "address": "tls://1.1.1.1", "detour": "direct"},
+		dnsTLSServer("dns-direct", "1.1.1.1", "direct"),
 	}
 	if personalAvailable {
-		dnsServers = append(dnsServers, map[string]any{"tag": "dns-proxy", "address": "tls://1.1.1.1", "detour": "proxy"})
+		dnsServers = append(dnsServers, dnsTLSServer("dns-proxy", "1.1.1.1", "proxy"))
 	}
 	dnsRules := []map[string]any{
 		{"domain_suffix": []string{".ru", ".рф"}, "server": "dns-direct"},
@@ -193,11 +207,7 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 	sysIface := systemTunIface(st)
 	if sysUp {
 		if corpDNS := systemVPNDNS(sysIface); corpDNS != "" {
-			dnsServers = append(dnsServers, map[string]any{
-				"tag":     "dns-work",
-				"address": "udp://" + corpDNS,
-				"detour":  "work",
-			})
+			dnsServers = append(dnsServers, dnsUDPServer("dns-work", corpDNS, "work"))
 		}
 		dnsRules = append([]map[string]any{
 			{"domain_suffix": routing.DefaultCorpSuffixes(), "server": "dns-work"},
@@ -213,23 +223,25 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 		"strict_route":          !sysUp,
 		"route_exclude_address": routeExclude,
 		"stack":                 "mixed",
-		"sniff":                 true,
+		// 1.14 default dns_mode=hijack → systemd-resolved (polkit-пароли) + лишние ip rule.
+		// DNS уже через route hijack-dns + секцию dns.
+		"dns_mode":             "disabled",
+		"iproute2_table_index": 20221,
+		"iproute2_rule_index":  9210,
 	}
 	inbounds := []map[string]any{tunInbound}
 	if personalAvailable {
 		inbounds = append(inbounds, map[string]any{
-			"type":          "mixed",
-			"tag":           "personal-probe-in",
-			"listen":        "127.0.0.1",
-			"listen_port":   47894,
-			"sniff":         true,
-			"sniff_timeout": "1s",
+			"type":        "mixed",
+			"tag":         "personal-probe-in",
+			"listen":      "127.0.0.1",
+			"listen_port": 47894,
 		})
 	}
-	// Системный VPN: без перехвата tun0 и без hijack-dns (см. buildRoute).
+	// Системный VPN: без перехвата tun0.
 	if sysUp {
 		tunInbound["route_address"] = []string{"0.0.0.0/1", "128.0.0.0/1"}
-		tunInbound["exclude_interface"] = []string{sysIface, "tun0", "tun1"}
+		tunInbound["exclude_interface"] = uniqueStrings(sysIface, "tun0", "tun1")
 	}
 	cfg := map[string]any{
 		"log": map[string]any{"level": "warn"},
@@ -249,7 +261,45 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 		"outbounds": buildOutbounds(outbound, st),
 		"route":     buildRoute(st, node, sysUp, sysIface),
 	}
+	if endpoint != nil {
+		cfg["endpoints"] = []any{endpoint}
+	}
 	return writeJSON(path, cfg)
+}
+
+func dnsTLSServer(tag, server, detour string) map[string]any {
+	return map[string]any{
+		"type":   "tls",
+		"tag":    tag,
+		"server": server,
+		"detour": detour,
+	}
+}
+
+func dnsUDPServer(tag, server, detour string) map[string]any {
+	return map[string]any{
+		"type":   "udp",
+		"tag":    tag,
+		"server": server,
+		"detour": detour,
+	}
+}
+
+func uniqueStrings(vals ...string) []string {
+	seen := make(map[string]struct{}, len(vals))
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func buildDirectOutbound(st config.Settings) map[string]any {
@@ -297,6 +347,7 @@ func proxyBypassRules(node subscription.Node) []map[string]any {
 func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, sysIface string) map[string]any {
 	personalAvailable := st.PersonalVPN.Enabled && node != nil
 	rules := []map[string]any{
+		{"action": "sniff", "timeout": "1s"},
 		{"protocol": "dns", "action": "hijack-dns"},
 		{"ip_cidr": []string{"127.0.0.0/8"}, "outbound": "direct"},
 	}
@@ -350,9 +401,10 @@ func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, sysIfac
 		map[string]any{"ip_is_private": true, "outbound": "direct"},
 	)
 	return map[string]any{
-		"rules":                 rules,
-		"final":                 "direct",
-		"auto_detect_interface": true,
+		"rules":                   rules,
+		"final":                   "direct",
+		"auto_detect_interface":   true,
+		"default_domain_resolver": "dns-direct",
 	}
 }
 

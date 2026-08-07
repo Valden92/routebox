@@ -147,6 +147,7 @@ func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
 			"sing-box-recover",
 			"auto-routing-observer",
 			"subscription-import",
+			"openvpn-import",
 		},
 	})
 }
@@ -392,8 +393,10 @@ func (s *Server) listSubscriptions(w http.ResponseWriter, _ *http.Request) {
 type addSubReq struct {
 	Name            string `json:"name"`
 	URL             string `json:"url"`
-	Source          string `json:"source"`  // url | text | uri (file на клиенте → text)
-	Content         string `json:"content"` // тело для text/uri
+	Source          string `json:"source"`  // url | text | uri | ovpn (file на клиенте → text|ovpn)
+	Content         string `json:"content"` // тело для text/uri/ovpn
+	Username        string `json:"username"`
+	Password        string `json:"password"`
 	RefreshInterval int    `json:"refreshIntervalMinutes"`
 	AutoRefresh     bool   `json:"autoRefresh"`
 }
@@ -408,6 +411,7 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 	req.URL = strings.TrimSpace(req.URL)
 	req.Content = strings.TrimSpace(req.Content)
 	req.Source = strings.ToLower(strings.TrimSpace(req.Source))
+	req.Username = strings.TrimSpace(req.Username)
 	if req.Name == "" {
 		http.Error(w, "укажите название", 400)
 		return
@@ -420,7 +424,7 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var body []byte
+	var nodes []subscription.Node
 	switch req.Source {
 	case "url":
 		if !subscription.IsRemoteURL(req.URL) {
@@ -432,28 +436,54 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), 502)
 			return
 		}
-		body = fetched
+		parsed, err := subscription.ParseBody(fetched)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		nodes = parsed
 	case "text", "uri", "file":
 		if req.Content == "" {
 			http.Error(w, "вставьте содержимое подписки или share-ссылку", 400)
 			return
 		}
-		body = []byte(req.Content)
+		parsed, err := subscription.ParseBody([]byte(req.Content))
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		nodes = parsed
+		req.URL = ""
+		req.AutoRefresh = false
+	case "ovpn":
+		if req.Content == "" {
+			http.Error(w, "вставьте содержимое .ovpn", 400)
+			return
+		}
+		n, err := subscription.ParseOvpn(req.Content, req.Name)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if n.AuthUserPass {
+			if req.Username == "" || req.Password == "" {
+				http.Error(w, "для этого профиля нужны логин и пароль OpenVPN", 400)
+				return
+			}
+			n.Username = req.Username
+			n.Password = req.Password
+		}
+		nodes = []subscription.Node{n}
 		req.URL = ""
 		req.AutoRefresh = false
 	default:
-		http.Error(w, "неизвестный source (url|text|uri)", 400)
+		http.Error(w, "неизвестный source (url|text|uri|ovpn)", 400)
 		return
 	}
 
-	nodes, err := subscription.ParseBody(body)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
 	nodes = subscription.FilterValidNodes(nodes)
 	if len(nodes) == 0 {
-		http.Error(w, "в подписке не найдено серверов (vless/vmess/…)", 400)
+		http.Error(w, "в подписке не найдено серверов (vless/vmess/openvpn/…)", 400)
 		return
 	}
 

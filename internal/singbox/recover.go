@@ -2,7 +2,10 @@ package singbox
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -106,6 +109,7 @@ func RestoreAfterPersonalVPNOn(mainIface string) {
 	workIface := "tun0"
 	// Даём sing-box самому снять маршруты/TUN
 	time.Sleep(800 * time.Millisecond)
+	CleanupStaleTUNRules()
 	removePersonalVPNRoutes(DefaultTunIface)
 
 	workActive := workVPNActive(workIface)
@@ -124,6 +128,75 @@ func RestoreAfterPersonalVPNOn(mainIface string) {
 		return
 	}
 	ensureDefaultViaMain(mainIface)
+}
+
+// iproute2 индексы Router BOX (не дефолт sing-box 2022/9000 — меньше конфликтов).
+const (
+	tunRouteTable = 20221
+	tunRuleStart  = 9210
+	tunRuleEnd    = 9250 // запас под exclude/DNS rules
+)
+
+// CleanupStaleTUNRules снимает залипшие ip rule/table после crash sing-box.
+// Предпочитает ~/.local/bin/vpn-router-netclean (setcap via make sync); иначе прямой ip (часто no-op).
+func CleanupStaleTUNRules() {
+	if home, err := os.UserHomeDir(); err == nil {
+		helper := filepath.Join(home, ".local", "bin", "vpn-router-netclean")
+		if st, err := os.Stat(helper); err == nil && !st.IsDir() {
+			// Не вызываем сами себя, если мы и есть netclean.
+			if self, err := os.Executable(); err != nil || filepath.Clean(self) != filepath.Clean(helper) {
+				if out, err := exec.Command(helper).CombinedOutput(); err == nil {
+					_ = out
+					return
+				}
+			}
+		}
+	}
+	cleanupStaleTUNRulesIP()
+}
+
+func cleanupStaleTUNRulesIP() {
+	_ = exec.Command("ip", "route", "flush", "table", strconv.Itoa(tunRouteTable)).Run()
+	_ = exec.Command("ip", "route", "flush", "table", "2022").Run() // старый дефолт sing-box
+	out, err := exec.Command("ip", "rule", "show").Output()
+	if err != nil {
+		return
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		prio := rulePriority(line)
+		if prio >= tunRuleStart && prio <= tunRuleEnd {
+			_ = exec.Command("ip", "rule", "del", "priority", strconv.Itoa(prio)).Run()
+			continue
+		}
+		// Дефолтный диапазон sing-box ~9000 + старые DNS-hijack rules.
+		if prio >= 9000 && prio < 9100 {
+			_ = exec.Command("ip", "rule", "del", "priority", strconv.Itoa(prio)).Run()
+			continue
+		}
+		if strings.Contains(line, "lookup "+strconv.Itoa(tunRouteTable)) ||
+			strings.Contains(line, "lookup 2022") {
+			if prio > 0 {
+				_ = exec.Command("ip", "rule", "del", "priority", strconv.Itoa(prio)).Run()
+			}
+		}
+	}
+}
+
+func rulePriority(line string) int {
+	// "9210:	from all lookup 20221"
+	colon := strings.IndexByte(line, ':')
+	if colon <= 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(line[:colon]))
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func removePersonalVPNRoutes(tunIface string) {

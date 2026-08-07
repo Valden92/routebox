@@ -16,6 +16,8 @@ import {
 import {
   buildAddSubscriptionBody,
   isRemoteSubscriptionUrl,
+  looksLikeOvpn,
+  ovpnNeedsAuth,
   type SubImportSource,
 } from "./add-subscription";
 import { formatPing } from "./ping-label";
@@ -331,9 +333,39 @@ function setAddSource(source: SubImportSource) {
   if (remote) {
     hint.textContent = "Снимите галочку — обновлять подписку только кнопкой «Обновить».";
     syncAddRefreshInputs();
+  } else if (source === "file") {
+    hint.textContent =
+      "Автообновление для файла недоступно. Чтобы обновлять по сети — добавьте URL.";
   } else {
     hint.textContent =
       "Локальный импорт: автообновление недоступно. Чтобы обновлять по сети — добавьте URL.";
+  }
+  void syncOvpnAuthFields();
+}
+
+async function syncOvpnAuthFields() {
+  const authRow = el("#add-ovpn-auth");
+  const source = currentAddSource();
+  let content = "";
+  let fileName = "";
+  if (source === "file") {
+    const file = el<HTMLInputElement>("#add-sub-file").files?.[0];
+    if (file) {
+      fileName = file.name;
+      try {
+        content = await file.text();
+      } catch {
+        content = "";
+      }
+    }
+  } else if (source === "text") {
+    content = el<HTMLTextAreaElement>("#add-sub-content").value;
+  }
+  const show = looksLikeOvpn(content, fileName) && ovpnNeedsAuth(content);
+  authRow.classList.toggle("hidden", !show);
+  if (!show) {
+    el<HTMLInputElement>("#add-ovpn-user").value = "";
+    el<HTMLInputElement>("#add-ovpn-pass").value = "";
   }
 }
 
@@ -1025,6 +1057,10 @@ window.addEventListener("DOMContentLoaded", () => {
   fileInput.addEventListener("change", () => {
     const name = fileInput.files?.[0]?.name;
     fileName.textContent = name || "файл не выбран";
+    void syncOvpnAuthFields();
+  });
+  el("#add-sub-content").addEventListener("input", () => {
+    void syncOvpnAuthFields();
   });
 
   el("#form-add-sub").addEventListener("submit", async (e) => {
@@ -1036,6 +1072,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const auto = fd.get("autoRefresh") === "on";
     const mins = parseInt(String(fd.get("refreshMinutes") || "60"), 10) || 60;
     let content = "";
+    let pickedFileName = "";
     if (source === "text") {
       content = String(fd.get("content") || "");
     } else if (source === "uri") {
@@ -1046,6 +1083,7 @@ window.addEventListener("DOMContentLoaded", () => {
         showToast("Выберите файл подписки", true);
         return;
       }
+      pickedFileName = file.name;
       content = await file.text();
     }
     const body = buildAddSubscriptionBody({
@@ -1053,6 +1091,9 @@ window.addEventListener("DOMContentLoaded", () => {
       source,
       url: String(fd.get("url") || ""),
       content,
+      fileName: pickedFileName,
+      username: String(fd.get("ovpnUser") || ""),
+      password: String(fd.get("ovpnPass") || ""),
       autoRefresh: auto,
       refreshIntervalMinutes: mins,
     });
@@ -1064,6 +1105,7 @@ window.addEventListener("DOMContentLoaded", () => {
       });
       form.reset();
       resetFilePicker();
+      el("#add-ovpn-auth").classList.add("hidden");
       el<HTMLInputElement>("#add-auto-refresh").checked = true;
       el<HTMLInputElement>("#add-refresh-minutes").value = "60";
       setAddSource("url");

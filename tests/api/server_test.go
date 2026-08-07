@@ -224,6 +224,97 @@ func TestAddSubscriptionTextAndURI(t *testing.T) {
 	}
 }
 
+func TestAddSubscriptionOvpn(t *testing.T) {
+	ts, store, _ := newAPITest(t)
+	ovpn := `client
+proto udp
+remote ovpn.example.com 1194
+auth-user-pass
+<ca>
+-----BEGIN CERTIFICATE-----
+MIIB
+-----END CERTIFICATE-----
+</ca>
+<cert>
+-----BEGIN CERTIFICATE-----
+MIIB
+-----END CERTIFICATE-----
+</cert>
+<key>
+-----BEGIN PRIVATE KEY-----
+MIIB
+-----END PRIVATE KEY-----
+</key>
+`
+	code, raw := doJSON(t, ts, http.MethodPost, "/api/subscriptions/", map[string]any{
+		"name": "ovpn-sub", "source": "ovpn", "content": ovpn,
+	})
+	if code != 400 {
+		t.Fatalf("without creds want 400, got %d %s", code, raw)
+	}
+
+	code, raw = doJSON(t, ts, http.MethodPost, "/api/subscriptions/", map[string]any{
+		"name": "ovpn-sub", "source": "ovpn", "content": ovpn,
+		"username": "user1", "password": "secret",
+	})
+	if code != 200 {
+		t.Fatalf("ovpn: %d %s", code, raw)
+	}
+	var sub config.Subscription
+	if err := json.Unmarshal(raw, &sub); err != nil {
+		t.Fatal(err)
+	}
+	if sub.URL != "" || sub.AutoRefresh {
+		t.Fatalf("local must not refresh: %+v", sub)
+	}
+	code, raw = doJSON(t, ts, http.MethodGet, "/api/subscriptions/"+sub.ID+"/nodes", nil)
+	if code != 200 {
+		t.Fatalf("nodes: %d %s", code, raw)
+	}
+	var nodes []subscription.Node
+	_ = json.Unmarshal(raw, &nodes)
+	if len(nodes) != 1 || nodes[0].Protocol != "openvpn" || nodes[0].Host != "ovpn.example.com" {
+		t.Fatalf("%+v", nodes)
+	}
+	if nodes[0].Username != "user1" || nodes[0].Password != "secret" {
+		t.Fatalf("creds not stored: %+v", nodes[0])
+	}
+	if !nodes[0].AuthUserPass || len(nodes[0].CA) == 0 {
+		t.Fatalf("pem/auth flags: %+v", nodes[0])
+	}
+	if len(store.Get().Subscriptions) != 1 {
+		t.Fatalf("%+v", store.Get().Subscriptions)
+	}
+
+	code, raw = doJSON(t, ts, http.MethodPost, "/api/subscriptions/", map[string]any{
+		"name": "bad", "source": "ovpn", "content": "client\nremote x 1\nca /etc/ca.crt\n",
+	})
+	if code != 400 {
+		t.Fatalf("external path want 400, got %d %s", code, raw)
+	}
+}
+
+func TestVersionHasOpenVPNFeature(t *testing.T) {
+	ts, _, _ := newAPITest(t)
+	code, raw := doJSON(t, ts, http.MethodGet, "/api/version", nil)
+	if code != 200 {
+		t.Fatalf("%d %s", code, raw)
+	}
+	var ver map[string]any
+	_ = json.Unmarshal(raw, &ver)
+	feats, _ := ver["features"].([]any)
+	found := false
+	for _, f := range feats {
+		if f == "openvpn-import" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("openvpn-import missing: %v", feats)
+	}
+}
+
 func TestAddSubscriptionRejectsEmpty(t *testing.T) {
 	ts, _, _ := newAPITest(t)
 	code, _ := doJSON(t, ts, http.MethodPost, "/api/subscriptions/", map[string]any{
