@@ -79,11 +79,30 @@
                 type="file"
                 id="add-sub-file"
                 class="file-picker-input"
-                accept=".txt,.conf,.base64,text/plain"
+                accept=".txt,.conf,.base64,.ovpn,text/plain"
               />
               <button type="button" class="secondary" id="add-sub-file-btn">Выбрать файл</button>
               <span class="muted file-picker-name" id="add-sub-file-name">файл не выбран</span>
             </div>
+            <p class="muted file-picker-formats">
+              Форматы: <code>.txt</code>, <code>.conf</code>, <code>.base64</code> (список
+              vless/ss/hy2) или <code>.ovpn</code> (OpenVPN, сертификаты внутри файла)
+            </p>
+          </div>
+          <div id="add-ovpn-auth" class="sub-form-row hidden">
+            <input
+              name="ovpnUser"
+              id="add-ovpn-user"
+              placeholder="OpenVPN логин"
+              autocomplete="username"
+            />
+            <input
+              name="ovpnPass"
+              id="add-ovpn-pass"
+              type="password"
+              placeholder="OpenVPN пароль"
+              autocomplete="current-password"
+            />
           </div>
           <div class="sub-form-row" id="add-refresh-row">
             <label class="check-label">

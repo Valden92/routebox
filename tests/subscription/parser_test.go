@@ -92,6 +92,16 @@ func TestValidNode(t *testing.T) {
 		{"no host", subscription.Node{Port: 443, Protocol: "vless"}, false},
 		{"no port", subscription.Node{Host: "a.com", Protocol: "vless"}, false},
 		{"bad proto", subscription.Node{Host: "a.com", Port: 443, Protocol: "ftp"}, false},
+		{"openvpn ok", subscription.Node{
+			Host: "vpn.example.com", Port: 1194, Protocol: "openvpn",
+			ConfigText: "client", CA: []string{"-----BEGIN CERTIFICATE-----"},
+		}, true},
+		{"openvpn no ca", subscription.Node{
+			Host: "vpn.example.com", Port: 1194, Protocol: "openvpn", ConfigText: "client",
+		}, false},
+		{"openvpn no config", subscription.Node{
+			Host: "vpn.example.com", Port: 1194, Protocol: "openvpn", CA: []string{"x"},
+		}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

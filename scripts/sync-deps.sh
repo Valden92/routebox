@@ -7,7 +7,7 @@ export PATH="${HOME}/.local/go/bin:${HOME}/.cargo/bin:${HOME}/.local/bin:${PATH}
 
 GO_VERSION="${GO_VERSION:-1.24.2}"
 GO_INSTALL_DIR="${HOME}/.local/go"
-SING_BOX_VERSION="${SING_BOX_VERSION:-1.11.7}"
+SING_BOX_VERSION="${SING_BOX_VERSION:-1.14.0-beta.9}"
 
 APT_PACKAGES=(
   libwebkit2gtk-4.1-dev
@@ -216,7 +216,10 @@ host_ready() {
   [[ -f "$dropin" ]] || return 1
   grep -q 'interface-name:tun100' "$dropin" && grep -q unmanaged-devices "$dropin"
   ! grep -q 'type:tun' "$dropin" && ! grep -q 'interface-name:tun0' "$dropin"
-  [[ -f "$stamp" ]] && grep -q 'nm+setcap+polkit-singbox+v6' "$stamp"
+  [[ -f "$stamp" ]] && grep -q 'nm+setcap+polkit-singbox+v7' "$stamp"
+  local netclean="${HOME}/.local/bin/vpn-router-netclean"
+  [[ -x "$netclean" ]] || return 1
+  getcap "$netclean" 2>/dev/null | grep -q cap_net_admin || return 1
   [[ -f "${HOME}/.config/vpn-router/polkit-vpn-router.rules" ]]
 }
 

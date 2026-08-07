@@ -41,11 +41,11 @@ make reset-host # сбросить хост-настройку; затем сн�
 | Компонент | Путь | Роль |
 |-----------|------|------|
 | Точка входа демона | `cmd/daemon/main.go` | Store, sing-box Manager, graceful shutdown + recover маршрутов |
-| HTTP API | `internal/api/server.go`, `personal.go` | chi router, `apiVersion = 3` |
-| sing-box | `internal/singbox/` | Генерация конфига, start/stop, coexist, recover |
+| HTTP API | `internal/api/server.go`, `personal.go` | chi router, `apiVersion = 5` |
+| sing-box | `internal/singbox/` | Генерация конфига, start/stop, coexist, recover; pin **≥ 1.14.0-beta** (OpenVPN endpoint) |
 | Системный VPN (read-only) | `internal/nm/workvpn.go` | Статус через NM, **без connect/disconnect** |
 | Настройки | `internal/config/config.go` | JSON в `settings.json`, шифрование |
-| Подписки | `internal/subscription/` | VLESS/Hysteria2, парсинг, fetch |
+| Подписки | `internal/subscription/` | VLESS/Hysteria2/SS + **OpenVPN** (`ParseOvpn`, `source=ovpn`) |
 | UI | `desktop/src/main.ts`, `api.ts`, `index.html` | Карточки статуса, личный VPN |
 | Хост | `scripts/configure-host-inner.sh`, `polkit-vpn-router.rules` | setcap, NM drop-in, polkit resolve1 только для `tun100` |
 
@@ -100,7 +100,7 @@ ip link show tun100
 | POST | `/api/personal-vpn/disconnect` | stop + recover маршрутов |
 | POST | `/api/personal-vpn/reapply` | Перезапись конфига без смены узла |
 | GET | `/api/personal-vpn/status` | Детальный статус |
-| * | `/api/subscriptions/*` | CRUD, refresh, ping, select node |
+| * | `/api/subscriptions/*` | CRUD, refresh, ping, select node; `source`: url\|text\|uri\|**ovpn** |
 | * | `/api/rules/*` | Правила доменов/приложений |
 | GET | `/api/apps` | Скан процессов (Linux) |
 | POST | `/api/probe/site` | Проверка URL по путям |
@@ -154,11 +154,12 @@ make stop              # тоже гасит sing-box
 2. **Go:** пакеты в `internal/`, build tags `_linux.go` / `_stub.go` для платформ.
 3. **Системный VPN:** только чтение статуса; не возвращать connect/disconnect API.
 4. **Coexist:** любое изменение `WriteConfig` — проверить `coexist_linux_test.go` и `config_validate.go`.
-5. **Polkit/NM:** изменения в `scripts/` требуют bump stamp в `configure-host-inner.sh`.
-6. **API version:** при ломающих изменениях API — увеличить `apiVersion` в `server.go` и типы в `desktop/src/api.ts`.
-7. Перед рефакторингом — GitNexus `impact` / `context` (см. ниже).
-8. **Линт / CI:** после правок кода агент **обязан** прогнать `make check-fmt`, `make lint`, `make test` (или `make precommit` / `make ci`) и починить падения. Pre-commit: `make hooks`. Workflows: `.github/workflows/{lint,format,test}.yml`; clippy — `lint-rust.yml` при изменениях Tauri. Юнит-тесты: Go — `tests/`; UI — Vitest в `desktop/`. Конфиги: `.golangci.yml`, `desktop/eslint.config.js`, `.editorconfig`.
-9. **Тесты на логику:** любая новая/изменённая ветвящаяся логика должна получить unit-тесты в той же задаче (см. `.cursor/rules/quality-gate.mdc`).
+5. **OpenVPN:** только inline certs в `.ovpn`; endpoint `openvpn-client` с `tag: proxy`, `system: false`, `route_no_pull: true`. Нужен sing-box **1.14+** (beta pin в `SING_BOX_VERSION`). TUN: `dns_mode: disabled` (иначе 1.14 лезет в resolve1 → пароли polkit).
+6. **Polkit/NM:** изменения в `scripts/` требуют bump stamp в `configure-host-inner.sh` (сейчас **v7**: + `vpn-router-netclean` setcap).
+7. **API version:** при ломающих изменениях API — увеличить `apiVersion` в `server.go` и типы в `desktop/src/api.ts`.
+8. Перед рефакторингом — GitNexus `impact` / `context` (см. ниже).
+9. **Линт / CI:** после правок кода агент **обязан** прогнать `make check-fmt`, `make lint`, `make test` (или `make precommit` / `make ci`) и починить падения. Pre-commit: `make hooks`. Workflows: `.github/workflows/{lint,format,test}.yml`; clippy — `lint-rust.yml` при изменениях Tauri. Юнит-тесты: Go — `tests/`; UI — Vitest в `desktop/`. Конфиги: `.golangci.yml`, `desktop/eslint.config.js`, `.editorconfig`.
+10. **Тесты на логику:** любая новая/изменённая ветвящаяся логика должна получить unit-тесты в той же задаче (см. `.cursor/rules/quality-gate.mdc`).
 
 ### Где искать по задаче
 

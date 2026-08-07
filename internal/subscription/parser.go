@@ -20,6 +20,19 @@ type Node struct {
 	Port     int    `json:"port"`
 	RawURI   string `json:"rawUri"`
 	SNI      string `json:"sni,omitempty"`
+
+	// OpenVPN (.ovpn): полный профиль и inline PEM (без внешних путей).
+	ConfigText   string   `json:"configText,omitempty"`
+	Network      string   `json:"network,omitempty"` // udp|tcp
+	AuthUserPass bool     `json:"authUserPass,omitempty"`
+	Username     string   `json:"username,omitempty"`
+	Password     string   `json:"password,omitempty"`
+	CA           []string `json:"ca,omitempty"`
+	Cert         []string `json:"cert,omitempty"`
+	Key          []string `json:"key,omitempty"`
+	TLSAuth      []string `json:"tlsAuth,omitempty"`
+	TLSCrypt     []string `json:"tlsCrypt,omitempty"`
+	KeyDirection string   `json:"keyDirection,omitempty"`
 }
 
 type Cache struct {
@@ -78,7 +91,11 @@ func ValidNode(n Node) bool {
 	if n.Host == "" || n.Port <= 0 {
 		return false
 	}
-	_, ok := allowedSchemes[strings.ToLower(n.Protocol)]
+	proto := strings.ToLower(n.Protocol)
+	if proto == "openvpn" {
+		return len(n.CA) > 0 && strings.TrimSpace(n.ConfigText) != ""
+	}
+	_, ok := allowedSchemes[proto]
 	return ok
 }
 

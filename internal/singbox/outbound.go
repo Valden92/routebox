@@ -16,16 +16,23 @@ func uriToOutbound(node subscription.Node) (map[string]any, error) {
 		return nil, err
 	}
 	tag := "proxy"
+	var o map[string]any
 	switch u.Scheme {
 	case "vless":
-		return vlessOutbound(tag, u)
+		o, err = vlessOutbound(tag, u)
 	case "hysteria2":
-		return hysteria2Outbound(tag, u)
+		o, err = hysteria2Outbound(tag, u)
 	case "ss":
-		return shadowsocksOutbound(tag, u)
+		o, err = shadowsocksOutbound(tag, u)
 	default:
 		return nil, fmt.Errorf("unsupported protocol %s", u.Scheme)
 	}
+	if err != nil {
+		return nil, err
+	}
+	// sing-box 1.12+: резолв домена сервера через dns-direct (не через proxy).
+	o["domain_resolver"] = "dns-direct"
+	return o, nil
 }
 
 // URIToOutbound строит outbound sing-box из RawURI узла (для тестов и отладки).
