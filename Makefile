@@ -14,8 +14,9 @@ PID_FILE     := $(ROOT)/.daemon.pid
 SYNC_SCRIPT  := $(ROOT)/scripts/sync-deps.sh
 
 .PHONY: all dev run build sidecar daemon daemon-fg desktop sync stop restart clean help \
-	install-sing-box setcap-sing-box configure-host recover-network deps deps-apt sync-go sync-node sync-rust \
-	lint lint-go lint-ui lint-rust fmt fmt-go fmt-ui fmt-rust check-fmt test lint-tools hooks precommit
+	install-sing-box setcap-sing-box configure-host reset-host reset-host-wipe recover-network \
+	deps deps-apt sync-go sync-node sync-rust check-prereqs \
+	lint lint-go lint-ui lint-rust fmt fmt-go fmt-ui fmt-rust check-fmt test lint-tools hooks precommit ci
 
 .DEFAULT_GOAL := dev
 
@@ -38,12 +39,27 @@ sync:
 	@chmod +x $(SYNC_SCRIPT) $(ROOT)/scripts/install-sing-box.sh
 	@$(SYNC_SCRIPT)
 
+## Только предусловия ОС/пользователя (без установки)
+check-prereqs:
+	@chmod +x $(SYNC_SCRIPT)
+	@$(SYNC_SCRIPT) --check-prereqs
+
 # Алиасы (всё сводится к sync)
 deps sync-go sync-node sync-rust deps-apt install-sing-box: sync
 
 setcap-sing-box configure-host:
 	@chmod +x $(ROOT)/scripts/configure-host.sh $(ROOT)/scripts/setcap-sing-box.sh
 	@$(ROOT)/scripts/configure-host.sh
+
+## Сбросить хост-настройку (polkit/NM/setcap); пользовательский конфиг сохранить
+reset-host:
+	@chmod +x $(ROOT)/scripts/reset-host.sh $(ROOT)/scripts/reset-host-inner.sh
+	@$(ROOT)/scripts/reset-host.sh
+
+## То же + бэкап и удаление ~/.config/vpn-router
+reset-host-wipe:
+	@chmod +x $(ROOT)/scripts/reset-host.sh $(ROOT)/scripts/reset-host-inner.sh
+	@RESET_WIPE_CONFIG=1 $(ROOT)/scripts/reset-host.sh
 
 recover-network:
 	@chmod +x $(ROOT)/scripts/recover-network.sh
@@ -149,6 +165,7 @@ help:
 	@echo "Router BOX"
 	@echo ""
 	@echo "  make sync     — зависимости + setcap/NM для личного VPN (sudo при первом разе)"
+	@echo "  make check-prereqs — проверить Linux/NM/polkit/Node до sync"
 	@echo "  make hooks    — включить git pre-commit (формат + линт + тесты)"
 	@echo "  make precommit — check-fmt + lint + test (как хук / CI)"
 	@echo "  make ci       — алиас make precommit"
@@ -166,5 +183,7 @@ help:
 	@echo "  make test-go / test-ui — по отдельности"
 	@echo "  make lint-tools — поставить golangci-lint и npm lint deps"
 	@echo "  make configure-host — повторить настройку TUN/NM (обычно не нужно после sync)"
+	@echo "  make reset-host — сбросить polkit/NM/setcap (конфиг сохранить); затем make sync"
+	@echo "  make reset-host-wipe — reset-host + бэкап и удаление ~/.config/vpn-router"
 	@echo "  make recover-network — если пропал интернет после личного VPN"
 	@echo "  make clean"

@@ -26,8 +26,18 @@
 
 ## Требования
 
-- Linux с NetworkManager (Debian/Ubuntu для автоматической установки системных libs)
-- Node.js 20+ в PATH (`node` / `npm`) — остальное ставит `make sync`
+Пользователь/ОС до `make sync` (проверяется автоматически):
+
+- Linux с **NetworkManager** (служба активна, есть `nmcli`)
+- **systemd-resolved** (`resolvectl`) — DNS в режиме coexist
+- **polkit** — иначе личный VPN будет запрашивать системную аутентификацию
+- **iproute2** (`ip`)
+- **Node.js 20+** в PATH (`node` / `npm`) — sync его не ставит
+- возможность **sudo** (первый sync: apt + setcap/polkit/NM)
+
+Проверка без установки: `make check-prereqs`.
+
+Остальное (Go, Rust, Tauri libs, sing-box, настройка хоста) ставит `make sync`.
 
 ## Быстрый старт
 
@@ -43,6 +53,14 @@ make dev       # демон + UI
 
 Личный VPN включается в UI **без пароля** — права выдаются при `make sync`.  
 Пароль системы может понадобиться только в терминале во время `sync` (apt и настройка хоста).
+
+Чтобы сбросить системную настройку хоста и настроить заново:
+
+```bash
+make reset-host       # убрать polkit/NM/setcap, подписки сохранить
+# make reset-host-wipe  # ещё и ~/.config/vpn-router → *.bak.…
+make sync && make dev
+```
 
 ### Маршрутизатор и личный VPN (sing-box / TUN)
 
