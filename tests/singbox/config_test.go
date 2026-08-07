@@ -164,6 +164,9 @@ func TestWriteRouterConfigFullMode(t *testing.T) {
 	if !containsAll(s, "hijack-dns", `"tag": "proxy"`, "tun100", "personal-probe-in", `"dns_mode": "disabled"`) {
 		t.Fatalf("missing expected fields:\n%s", s)
 	}
+	if !containsAll(s, `"stack": "system"`, `"mtu": 1400`, `"auto_redirect": true`, `"strict_route": false`) {
+		t.Fatalf("missing TUN perf fields:\n%s", s)
+	}
 	mode := singbox.ConfigFileMode(path)
 	if mode != singbox.ConfigModeFull && mode != singbox.ConfigModeCoexist {
 		t.Fatalf("mode %q", mode)

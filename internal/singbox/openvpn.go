@@ -52,6 +52,7 @@ func openvpnEndpoint(tag string, node subscription.Node) (map[string]any, error)
 		"network":         network,
 		"system":          false,
 		"route_no_pull":   true,
+		"mtu":             tunMTU, // меньше фрагментации поверх UDP OpenVPN
 		"domain_resolver": "dns-direct",
 		"pull_filters": []map[string]any{
 			{"action": "ignore", "text": "route"},

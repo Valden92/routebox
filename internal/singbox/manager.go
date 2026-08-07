@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,6 +36,12 @@ type Manager struct {
 
 const ClashAPIAddr = "127.0.0.1:47893"
 const PersonalProbeProxyURL = "http://127.0.0.1:47894"
+
+// TUN perf: system stack + ниже MTU под OpenVPN overhead; auto_redirect на Linux.
+const (
+	tunStack = "system"
+	tunMTU   = 1400
+)
 
 func NewManager(binPath, cfgPath string) *Manager {
 	logPath := filepath.Join(filepath.Dir(cfgPath), "sing-box.log")
@@ -209,15 +216,23 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 		"tag":                   "tun-in",
 		"interface_name":        tunName,
 		"address":               []string{"172.19.0.1/30"},
+		"mtu":                   tunMTU,
 		"auto_route":            true,
 		"strict_route":          !sysUp,
 		"route_exclude_address": routeExclude,
-		"stack":                 "mixed",
+		"stack":                 tunStack,
 		// 1.14 default dns_mode=hijack → systemd-resolved (polkit-пароли) + лишние ip rule.
 		// DNS уже через route hijack-dns + секцию dns.
 		"dns_mode":             "disabled",
 		"iproute2_table_index": 20221,
 		"iproute2_rule_index":  9210,
+	}
+	// Linux: nftables auto_redirect быстрее tproxy и лучше уживается с Docker.
+	// strict_route при auto_redirect затягивает SO_BINDTODEVICE обратно в TUN —
+	// ломает direct с bind_interface (петля). Поэтому strict_route выключаем.
+	if runtime.GOOS == "linux" {
+		tunInbound["auto_redirect"] = true
+		tunInbound["strict_route"] = false
 	}
 	inbounds := []map[string]any{tunInbound}
 	if personalAvailable {

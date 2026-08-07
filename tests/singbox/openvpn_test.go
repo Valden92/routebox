@@ -50,6 +50,12 @@ func TestWriteRouterConfigOpenVPNEndpoint(t *testing.T) {
 	if !strings.Contains(s, `"route_no_pull": true`) || !strings.Contains(s, `"system": false`) {
 		t.Fatalf("missing route_no_pull/system:\n%s", s)
 	}
+	if !strings.Contains(s, `"mtu": 1400`) {
+		t.Fatalf("expected mtu 1400 on tun/openvpn:\n%s", s)
+	}
+	if !strings.Contains(s, `"auto_redirect": true`) || !strings.Contains(s, `"stack": "system"`) {
+		t.Fatalf("expected auto_redirect/system stack:\n%s", s)
+	}
 	if !strings.Contains(s, `"type": "tls"`) || strings.Contains(s, `"address": "tls://`) {
 		t.Fatalf("expected typed DNS, not legacy address:\n%s", s)
 	}

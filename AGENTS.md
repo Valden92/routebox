@@ -154,7 +154,7 @@ make stop              # тоже гасит sing-box
 2. **Go:** пакеты в `internal/`, build tags `_linux.go` / `_stub.go` для платформ.
 3. **Системный VPN:** только чтение статуса; не возвращать connect/disconnect API.
 4. **Coexist:** любое изменение `WriteConfig` — проверить `coexist_linux_test.go` и `config_validate.go`.
-5. **OpenVPN:** только inline certs в `.ovpn`; endpoint `openvpn-client` с `tag: proxy`, `system: false`, `route_no_pull: true`. Нужен sing-box **1.14+** (beta pin в `SING_BOX_VERSION`). TUN: `dns_mode: disabled` (иначе 1.14 лезет в resolve1 → пароли polkit).
+5. **OpenVPN:** только inline certs в `.ovpn`; endpoint `openvpn-client` с `tag: proxy`, `system: false`, `route_no_pull: true`, `mtu: 1400`. Нужен sing-box **1.14+** (beta pin в `SING_BOX_VERSION`). TUN: `dns_mode: disabled`, `stack: system`, `mtu: 1400`, на Linux `auto_redirect: true` и `strict_route: false` (иначе SO_BINDTODEVICE/`bind_interface` зацикливается).
 6. **Polkit/NM:** изменения в `scripts/` требуют bump stamp в `configure-host-inner.sh` (сейчас **v7**: + `vpn-router-netclean` setcap).
 7. **API version:** при ломающих изменениях API — увеличить `apiVersion` в `server.go` и типы в `desktop/src/api.ts`.
 8. Перед рефакторингом — GitNexus `impact` / `context` (см. ниже).
