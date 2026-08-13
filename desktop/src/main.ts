@@ -260,7 +260,7 @@ async function refreshStatus() {
       <dt>Интерфейс</dt><dd>tun100</dd>
       <dt>Режим</dt><dd>${escapeHtml(routerModeLabel(s.personalVpn.configMode))}</dd>
       <dt>Приоритет</dt><dd>${escapeHtml(routerPriorityLabel(s.personalVpn.configMode))}</dd>
-      <dt>Наблюдение</dt><dd>${s.personalVpn.routingRunning ? "Chrome, Cursor, терминал" : "—"}</dd>
+      <dt>Наблюдение</dt><dd>${badge(Boolean(s.personalVpn.routingRunning), "Активно", "Не активно")}</dd>
     </dl>
     <p class="muted">${escapeHtml(routerModeHint(s.personalVpn.configMode))}</p>
     ${!s.personalVpn.routingRunning && pvErr ? `<p class="err">${escapeHtml(pvErr)}</p>` : ""}
