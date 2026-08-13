@@ -11,26 +11,36 @@ import (
 	"time"
 )
 
-func Fetch(ctx context.Context, subURL string) ([]byte, error) {
+// FetchResult — тело подписки и метаданные из HTTP-заголовков.
+type FetchResult struct {
+	Body []byte
+	Meta Meta
+}
+
+func Fetch(ctx context.Context, subURL string) (FetchResult, error) {
 	if !IsRemoteURL(subURL) {
-		return nil, fmt.Errorf("нет HTTP(S) URL для обновления")
+		return FetchResult{}, fmt.Errorf("нет HTTP(S) URL для обновления")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subURL, nil)
 	if err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
 	// Многие провайдеры (quattro-cloud и др.) отдают HTML без клиентского UA
 	req.Header.Set("User-Agent", "v2rayN/6.42.0")
 	req.Header.Set("Accept", "*/*")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("subscription HTTP %d", resp.StatusCode)
+		return FetchResult{}, fmt.Errorf("subscription HTTP %d", resp.StatusCode)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return FetchResult{}, err
+	}
+	return FetchResult{Body: body, Meta: MetaFromHeaders(resp.Header)}, nil
 }
 
 // IsRemoteURL — подписку можно обновлять по сети.

@@ -18,16 +18,21 @@
 Уже сделано у нас (не копировать из 3x-ui):
 
 - импорт URL + текст + share-URI + файл (`source=url|text|uri`);
-- `RemapSelection` при refresh (аналог их stable tags для outbound-subs);
-- ping узлов, probe сайта по путям, coexist / recover.
+- `RemapSelection` при refresh (аналог их stable tags для outbound-subs) + автовыбор единственного узла;
+- ping узлов, probe сайта по путям, coexist / recover;
+- заголовки подписки `Subscription-Userinfo` / `Profile-*` (квота и срок в UI).
 
 ## 2. Приоритеты (roadmap)
+
+**Канон приоритетов и сложностей:** [`docs/ROADMAP.md`](../ROADMAP.md).
+
+Ниже — исходная таблица из разбора 3x-ui (для контекста §3); при расхождении побеждает `ROADMAP.md`.
 
 | Pri | Идея | Ценность | Оценка сложности |
 |-----|------|----------|------------------|
 | **P1** | Clash / Mihomo YAML import | Много провайдеров только так | M |
 | **P1** | QR import (ссылка / текст / URL) | С телефона на десктоп | S–M |
-| **P1** | Заголовки подписки (`Subscription-Userinfo` и др.) | Трафик/срок без панели провайдера | S |
+| **P1** | ~~Заголовки подписки (`Subscription-Userinfo` и др.)~~ | Трафик/срок без панели провайдера | S · **сделано 2026-08-13** |
 | **P2** | Route explain («куда уйдёт host») | Отладка правил рядом с probe | S–M |
 | **P2** | Health-check личного VPN → reapply/reconnect | Меньше «залипших» сессий | M |
 | **P2** | SSRF-guard на fetch URL | Безопасность | S |
@@ -81,7 +86,7 @@
 
 ---
 
-### 3.3 Subscription HTTP headers — P1
+### 3.3 Subscription HTTP headers — P1 · **сделано 2026-08-13**
 
 **Смысл:** при `Fetch` URL сохранять метаданные провайдера.
 
@@ -90,14 +95,14 @@
 - `Subscription-Userinfo`: `upload=…; download=…; total=…; expire=…`
 - `Profile-Title`, `Profile-Update-Interval`, `Announce`, `Support-Url`
 
-**Куда:**
+**Куда (реализовано):**
 
-- `internal/subscription/fetch.go` — вернуть body + headers (или отдельный тип `FetchResult`);
-- `internal/config.Subscription` — поля `Traffic*`, `ExpireAt`, `ProfileTitle`, `Announce` (omitempty);
-- refresh / add URL — заполнять;
-- UI карточка подписки — строка «осталось X GiB · до YYYY-MM-DD».
+- `internal/subscription/fetch.go` → `FetchResult` + `meta.go` (`ParseUserinfo`, `DecodeHeaderText`);
+- `internal/config.Subscription` — `Traffic*`, `ExpireAt`, `ProfileTitle`, `Announce`, …;
+- add / refresh / scheduler — `applySubscriptionMeta`;
+- UI: `formatSubscriptionQuota` на карточке.
 
-**Тесты:** парсер `Userinfo` в `tests/subscription/`; API refresh с `httptest` и кастомными headers.
+**Тесты:** `tests/subscription/userinfo_test.go`; API refresh с headers в `tests/api/`.
 
 ---
 
@@ -152,7 +157,7 @@
 
 ## 4. Порядок внедрения (рекомендуемый)
 
-1. **Userinfo headers** — быстрый win, почти без UI-ломки.  
+1. ~~**Userinfo headers**~~ — сделано.  
 2. **Clash import** — закрывает дыру форматов.  
 3. **QR** — UX поверх уже расширенного импорта.  
 4. **SSRF-guard** — вместе с любым следующим касанием `Fetch`.  
@@ -179,3 +184,5 @@
 | Дата | Что |
 |------|-----|
 | 2026-08-05 | Первый разбор + недооценённые паттерны; этот документ и канвас |
+| 2026-08-13 | Приоритеты сведены в `docs/ROADMAP.md` (вместе с пунктами README) |
+| 2026-08-13 | P1 Userinfo / Profile-* — сделано |

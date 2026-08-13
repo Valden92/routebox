@@ -35,6 +35,69 @@ type Node struct {
 	KeyDirection string   `json:"keyDirection,omitempty"`
 }
 
+// EndpointLabel — краткая метка узла для UI (локальный .ovpn и т.п.).
+func EndpointLabel(n Node) string {
+	proto := strings.ToLower(strings.TrimSpace(n.Protocol))
+	if proto == "" {
+		proto = "node"
+	}
+	host := strings.TrimSpace(n.Host)
+	if host == "" {
+		return strings.ToUpper(proto)
+	}
+	label := fmt.Sprintf("%s · %s:%d", strings.ToUpper(proto), host, n.Port)
+	if net := strings.ToUpper(strings.TrimSpace(n.Network)); net != "" {
+		label += " · " + net
+	}
+	if n.AuthUserPass {
+		label += " · login"
+	}
+	return label
+}
+
+// NormalizeSource приводит source из API к канону: url|text|uri|ovpn.
+func NormalizeSource(source string) string {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "url":
+		return "url"
+	case "uri":
+		return "uri"
+	case "ovpn":
+		return "ovpn"
+	case "text", "file":
+		return "text"
+	default:
+		return ""
+	}
+}
+
+// InferSource угадывает тип для старых подписок без поля source.
+func InferSource(subURL string, nodes []Node) string {
+	if IsRemoteURL(subURL) {
+		return "url"
+	}
+	if len(nodes) == 0 {
+		return "text"
+	}
+	allOvpn := true
+	for _, n := range nodes {
+		if !strings.EqualFold(n.Protocol, "openvpn") {
+			allOvpn = false
+			break
+		}
+	}
+	if allOvpn {
+		return "ovpn"
+	}
+	if len(nodes) == 1 {
+		raw := strings.ToLower(strings.TrimSpace(nodes[0].RawURI))
+		if strings.Contains(raw, "://") && !strings.HasPrefix(raw, "openvpn://") {
+			return "uri"
+		}
+	}
+	return "text"
+}
+
 type Cache struct {
 	SubscriptionID string    `json:"subscriptionId"`
 	Nodes          []Node    `json:"nodes"`

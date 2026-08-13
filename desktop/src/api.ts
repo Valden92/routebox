@@ -88,11 +88,24 @@ export interface Subscription {
   id: string;
   name: string;
   url: string;
+  source?: string;
   refreshIntervalMinutes: number;
   autoRefresh: boolean;
+  createdAt?: string;
+  lastRefresh?: string;
   selectedNodeId?: string;
   nodeSelectCounts?: Record<string, number>;
   enabled: boolean;
+  trafficUpload?: number;
+  trafficDownload?: number;
+  trafficTotal?: number;
+  expireAt?: string;
+  profileTitle?: string;
+  announce?: string;
+  supportUrl?: string;
+  profileUpdateIntervalHours?: number;
+  importSummary?: string;
+  nodeCount?: number;
 }
 
 export interface Node {

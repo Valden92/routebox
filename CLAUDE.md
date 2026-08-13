@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **vpn-router** (594 symbols, 1452 relationships, 48 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **vpn-router** (1093 symbols, 2937 relationships, 89 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -64,12 +64,10 @@ This project is indexed by GitNexus as **vpn-router** (594 symbols, 1452 relatio
 ## Self-Check Before Finishing
 
 Before completing any code modification task, verify:
-1. New/changed logic has unit tests (Go `tests/` and/or desktop Vitest) — see `AGENTS.md` / `.cursor/rules/quality-gate.mdc`
-2. CI-equivalent checks are green: `make check-fmt && make lint && make test` (or `make ci`); fix failures before finishing
-3. `gitnexus_impact` was run for all modified symbols
-4. No HIGH/CRITICAL risk warnings were ignored
-5. `gitnexus_detect_changes()` confirms changes match expected scope
-6. All d=1 (WILL BREAK) dependents were updated
+1. `gitnexus_impact` was run for all modified symbols
+2. No HIGH/CRITICAL risk warnings were ignored
+3. `gitnexus_detect_changes()` confirms changes match expected scope
+4. All d=1 (WILL BREAK) dependents were updated
 
 ## Keeping the Index Fresh
 
