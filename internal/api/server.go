@@ -116,6 +116,7 @@ func (s *Server) routes() {
 		r.Get("/{id}/nodes", s.listNodes)
 		r.Post("/{id}/ping", s.pingNodes)
 		r.Post("/{id}/select", s.selectNode)
+		r.Post("/{id}/activate", s.activateSubscription)
 		r.Put("/{id}", s.updateSubscription)
 		r.Delete("/{id}", s.deleteSubscription)
 	})
@@ -387,7 +388,64 @@ func (s *Server) personalStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) listSubscriptions(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, s.Store.Get().Subscriptions)
+	st := s.Store.Get()
+	out := make([]config.Subscription, len(st.Subscriptions))
+	copy(out, st.Subscriptions)
+	for i := range out {
+		c, err := subscription.LoadCache(st.DataDir, out[i].ID)
+		var nodes []subscription.Node
+		if err == nil && len(c.Nodes) > 0 {
+			nodes = subscription.FilterValidNodes(c.Nodes)
+			if len(nodes) == 0 {
+				nodes = c.Nodes
+			}
+			out[i].NodeCount = len(nodes)
+			if strings.TrimSpace(out[i].ImportSummary) == "" {
+				out[i].ImportSummary = subscription.EndpointLabel(nodes[0])
+				if len(nodes) > 1 {
+					out[i].ImportSummary += fmt.Sprintf(" · +%d", len(nodes)-1)
+				}
+			}
+			selID, selCounts := subscription.RemapSelection(out[i].SelectedNodeID, out[i].NodeSelectCounts, nil, nodes)
+			if selID != out[i].SelectedNodeID || selectionCountsChanged(out[i].NodeSelectCounts, selCounts) {
+				subID := out[i].ID
+				_ = s.Store.Update(func(cur *config.Settings) {
+					for j := range cur.Subscriptions {
+						if cur.Subscriptions[j].ID == subID {
+							cur.Subscriptions[j].SelectedNodeID = selID
+							cur.Subscriptions[j].NodeSelectCounts = selCounts
+							return
+						}
+					}
+				})
+				out[i].SelectedNodeID = selID
+				out[i].NodeSelectCounts = selCounts
+			}
+		}
+		if src := subscription.NormalizeSource(out[i].Source); src != "" {
+			out[i].Source = src
+		} else {
+			out[i].Source = subscription.InferSource(out[i].URL, nodes)
+		}
+	}
+	writeJSON(w, out)
+}
+
+func selectionCountsChanged(a, b map[string]int) bool {
+	if len(a) != len(b) {
+		return true
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return true
+		}
+	}
+	for k := range b {
+		if _, ok := a[k]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 type addSubReq struct {
@@ -425,6 +483,7 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var nodes []subscription.Node
+	var fetchMeta subscription.Meta
 	switch req.Source {
 	case "url":
 		if !subscription.IsRemoteURL(req.URL) {
@@ -436,12 +495,13 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), 502)
 			return
 		}
-		parsed, err := subscription.ParseBody(fetched)
+		parsed, err := subscription.ParseBody(fetched.Body)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
 		nodes = parsed
+		fetchMeta = fetched.Meta
 	case "text", "uri", "file":
 		if req.Content == "" {
 			http.Error(w, "вставьте содержимое подписки или share-ссылку", 400)
@@ -500,11 +560,26 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 		ID:                     id,
 		Name:                   req.Name,
 		URL:                    req.URL,
+		Source:                 subscription.NormalizeSource(req.Source),
 		RefreshIntervalMinutes: mins,
 		AutoRefresh:            req.AutoRefresh,
 		Enabled:                true,
+		CreatedAt:              time.Now(),
 		LastRefresh:            time.Now(),
 	}
+	if sub.Source == "" {
+		sub.Source = subscription.InferSource(req.URL, nodes)
+	}
+	applySubscriptionMeta(&sub, fetchMeta)
+	if len(nodes) > 0 && !subscription.IsRemoteURL(req.URL) {
+		sub.ImportSummary = subscription.EndpointLabel(nodes[0])
+		if len(nodes) > 1 {
+			sub.ImportSummary += fmt.Sprintf(" · +%d", len(nodes)-1)
+		}
+	}
+	selID, selCounts := subscription.RemapSelection("", nil, nil, nodes)
+	sub.SelectedNodeID = selID
+	sub.NodeSelectCounts = selCounts
 	if err := s.Store.Update(func(st *config.Settings) {
 		st.Subscriptions = append(st.Subscriptions, sub)
 	}); err != nil {
@@ -537,12 +612,12 @@ func (s *Server) refreshSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "локальный импорт нельзя обновить по сети — добавьте URL или импортируйте заново", 400)
 		return
 	}
-	body, err := subscription.Fetch(r.Context(), sub.URL)
+	fetched, err := subscription.Fetch(r.Context(), sub.URL)
 	if err != nil {
 		http.Error(w, err.Error(), 502)
 		return
 	}
-	nodes, err := subscription.ParseBody(body)
+	nodes, err := subscription.ParseBody(fetched.Body)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return
@@ -559,6 +634,7 @@ func (s *Server) refreshSubscription(w http.ResponseWriter, r *http.Request) {
 		for i := range cur.Subscriptions {
 			if cur.Subscriptions[i].ID == id {
 				cur.Subscriptions[i].LastRefresh = time.Now()
+				applySubscriptionMeta(&cur.Subscriptions[i], fetched.Meta)
 			}
 		}
 	})
@@ -598,11 +674,11 @@ func (s *Server) loadNodes(r *http.Request, id string, st config.Settings) ([]su
 	if !subscription.IsRemoteURL(sub.URL) {
 		return nil, fmt.Errorf("локальный импорт: кэш узлов пуст — импортируйте подписку заново")
 	}
-	body, err := subscription.Fetch(r.Context(), sub.URL)
+	fetched, err := subscription.Fetch(r.Context(), sub.URL)
 	if err != nil {
 		return nil, err
 	}
-	nodes, err := subscription.ParseBody(body)
+	nodes, err := subscription.ParseBody(fetched.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -611,6 +687,14 @@ func (s *Server) loadNodes(r *http.Request, id string, st config.Settings) ([]su
 		return nil, fmt.Errorf("в подписке не найдено серверов")
 	}
 	_ = subscription.SaveCache(st.DataDir, id, nodes)
+	_ = s.Store.Update(func(cur *config.Settings) {
+		for i := range cur.Subscriptions {
+			if cur.Subscriptions[i].ID == id {
+				applySubscriptionMeta(&cur.Subscriptions[i], fetched.Meta)
+				cur.Subscriptions[i].LastRefresh = time.Now()
+			}
+		}
+	})
 	return nodes, nil
 }
 
@@ -751,6 +835,30 @@ func (s *Server) selectNode(w http.ResponseWriter, r *http.Request) {
 		st.PersonalVPN.ActiveSubscriptionID = id
 	})
 	writeJSON(w, map[string]string{"status": "selected"})
+}
+
+// activateSubscription делает подписку активной без смены выбранного узла.
+func (s *Server) activateSubscription(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	st := s.Store.Get()
+	found := false
+	for _, sub := range st.Subscriptions {
+		if sub.ID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "subscription not found", 404)
+		return
+	}
+	if err := s.Store.Update(func(cur *config.Settings) {
+		cur.PersonalVPN.ActiveSubscriptionID = id
+	}); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "activated", "subscriptionId": id})
 }
 
 func (s *Server) selectedNode(st config.Settings) (subscription.Node, error) {

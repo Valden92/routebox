@@ -416,6 +416,22 @@ select optgroup {
   gap: 0.45rem;
 }
 
+.sub-type {
+  margin: 0.2rem 0 0.15rem;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.sub-type-label {
+  color: #e8eaed;
+  font-weight: 700;
+}
+
+.sub-type-value {
+  color: #9aa0a6;
+  font-weight: 400;
+}
+
 .sub-header {
   display: flex;
   flex-wrap: wrap;
@@ -507,6 +523,13 @@ button.btn-danger:hover:not(:disabled) {
 .muted {
   color: #9aa0a6;
   font-size: 12px;
+}
+
+.sub-announce {
+  display: block;
+  white-space: pre-line;
+  margin-top: 0.25rem;
+  max-width: 42rem;
 }
 
 .nodes-list li {

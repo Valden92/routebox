@@ -25,6 +25,11 @@ import { orderNodes } from "./nodes-sort";
 import {
   filterRules,
   formatRefreshLabel,
+  formatSubscriptionQuota,
+  formatAnnounce,
+  formatSubscriptionDates,
+  formatSubscriptionStatusLine,
+  formatSubscriptionType,
   partitionDomainRules,
   rulesDataSignature,
 } from "./rules-util";
@@ -566,8 +571,6 @@ async function expandSubscription(id: string, forceOpen = false) {
       sub?.nodeSelectCounts ?? {},
     );
     cacheSubNodes(id, nodes, null, sub);
-    const meta = card.querySelector(`[data-node-count="${id}"]`);
-    if (meta) meta.textContent = ` · ${nodes.length} серверов`;
     showToast(`Загружено серверов: ${nodes.length}`);
   } catch (e) {
     list.innerHTML = `<li class="err">${escapeHtml(e instanceof Error ? e.message : "Ошибка загрузки")}</li>`;
@@ -584,8 +587,8 @@ async function deleteSubscription(id: string, name: string) {
   if (expandedSubId === id) expandedSubId = "";
   if (activeSubId === id) activeSubId = "";
   showToast("Подписка удалена");
-  await loadSubscriptions();
   await refreshStatus();
+  await loadSubscriptions();
 }
 
 async function saveSubSettings(id: string, auto: boolean, minutes: number, silent = false) {
@@ -637,12 +640,10 @@ async function persistSubSettings(id: string) {
 }
 
 async function loadSubscriptions() {
-  if (!cachedStatus) {
-    try {
-      cachedStatus = await api<StatusResponse>("/api/status");
-    } catch {
-      /* ignore */
-    }
+  try {
+    cachedStatus = await api<StatusResponse>("/api/status");
+  } catch {
+    /* keep previous cachedStatus */
   }
   const subs = await api<Subscription[]>("/api/subscriptions");
   const box = el<HTMLDivElement>("#subs-list");
@@ -659,18 +660,35 @@ async function loadSubscriptions() {
       const expanded = s.id === prevExpanded;
       const isActive = Boolean(activeId) && s.id === activeId;
       const remote = isRemoteSubscriptionUrl(s.url);
-      const refreshMeta = remote ? formatRefreshLabel(s) : "локальный импорт";
+      const statusLine = formatSubscriptionStatusLine(s, remote);
+      const typeLabel = formatSubscriptionType(s.source);
+      const quotaMeta = formatSubscriptionQuota(s);
+      const announce = formatAnnounce(s.announce);
+      const localMeta = !remote && s.importSummary ? s.importSummary.trim() : "";
+      const datesMeta = formatSubscriptionDates(s);
       return `
       <article class="sub-card${expanded ? " is-expanded" : ""}${isActive ? " is-active" : ""}" data-id="${s.id}">
         <div class="sub-header">
           <div class="sub-header-main">
             <div class="sub-title-row">
               <strong>${escapeHtml(s.name)}</strong>
-              ${isActive ? `<span class="badge badge-ok">Выбрана</span>` : ""}
-              ${!remote ? `<span class="badge">Локально</span>` : ""}
+              ${
+                isActive
+                  ? `<span class="badge badge-ok">Выбрана</span>`
+                  : `<span class="badge badge-err">Не выбрана</span>`
+              }
+              ${
+                isActive
+                  ? ""
+                  : `<button type="button" class="small" data-activate="${s.id}">Сделать активной</button>`
+              }
             </div>
-            <span class="muted" data-meta="${s.id}">${refreshMeta}${s.selectedNodeId ? " · сервер выбран" : ""}</span>
-            <span class="muted" data-node-count="${s.id}"></span>
+            <div class="sub-type" data-type="${s.id}"><span class="sub-type-label">Тип подписки:</span> <span class="sub-type-value">${escapeHtml(typeLabel)}</span></div>
+            <span class="muted" data-meta="${s.id}">${escapeHtml(statusLine)}</span>
+            ${datesMeta ? `<span class="muted" data-dates="${s.id}">${escapeHtml(datesMeta)}</span>` : ""}
+            ${localMeta ? `<span class="muted" data-import="${s.id}">${escapeHtml(localMeta)}</span>` : ""}
+            ${quotaMeta ? `<span class="muted" data-quota="${s.id}">${escapeHtml(quotaMeta)}</span>` : ""}
+            ${announce ? `<span class="muted sub-announce" data-announce="${s.id}">${escapeHtml(announce)}</span>` : ""}
           </div>
           <div class="sub-header-actions">
             <button type="button" class="secondary small" data-toggle="${s.id}">${expanded ? "Свернуть" : "Показать серверы"}</button>
@@ -725,6 +743,24 @@ async function loadSubscriptions() {
     });
   });
 
+  box.querySelectorAll("[data-activate]").forEach((btn) => {
+    btn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const id = (btn as HTMLButtonElement).dataset.activate!;
+      (btn as HTMLButtonElement).disabled = true;
+      try {
+        await api(`/api/subscriptions/${id}/activate`, { method: "POST" });
+        showToast("Подписка сделана активной");
+        // Сначала статус: loadSubscriptions читает activeId из cachedStatus.
+        await refreshStatus();
+        await loadSubscriptions();
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : "Не удалось активировать", true);
+        (btn as HTMLButtonElement).disabled = false;
+      }
+    });
+  });
+
   box.querySelectorAll("[data-auto]").forEach((inp) => {
     inp.addEventListener("change", () => {
       const id = (inp as HTMLInputElement).dataset.auto!;
@@ -770,7 +806,8 @@ async function loadSubscriptions() {
       try {
         await api(`/api/subscriptions/${id}/refresh`, { method: "POST" });
         showToast("Подписка обновлена");
-        await expandSubscription(id, true);
+        expandedSubId = id;
+        await loadSubscriptions();
       } catch (e) {
         showToast(e instanceof Error ? e.message : "Ошибка", true);
       } finally {

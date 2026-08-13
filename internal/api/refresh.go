@@ -45,13 +45,13 @@ func (r *refreshScheduler) tick() {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		body, err := subscription.Fetch(ctx, sub.URL)
+		fetched, err := subscription.Fetch(ctx, sub.URL)
 		cancel()
 		if err != nil {
 			log.Printf("subscription %s refresh: %v", sub.ID, err)
 			continue
 		}
-		nodes, err := subscription.ParseBody(body)
+		nodes, err := subscription.ParseBody(fetched.Body)
 		if err != nil {
 			continue
 		}
@@ -66,6 +66,7 @@ func (r *refreshScheduler) tick() {
 			for i := range cur.Subscriptions {
 				if cur.Subscriptions[i].ID == sub.ID {
 					cur.Subscriptions[i].LastRefresh = now
+					applySubscriptionMeta(&cur.Subscriptions[i], fetched.Meta)
 				}
 			}
 		})

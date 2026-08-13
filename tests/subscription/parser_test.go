@@ -164,15 +164,23 @@ func TestRemapSelection(t *testing.T) {
 	}
 
 	id, counts = subscription.RemapSelection("old", map[string]int{"old": 2}, prev, nextGone)
-	if id != "" {
-		t.Fatalf("clear id: %s", id)
+	if id != "other" {
+		t.Fatalf("auto-select remaining: %s %v", id, counts)
 	}
 	if _, ok := counts["old"]; ok {
 		t.Fatalf("clear counts: %v", counts)
 	}
 
-	id, _ = subscription.RemapSelection("", nil, prev, nextRemap)
-	if id != "" {
-		t.Fatal("empty selection")
+	id, counts = subscription.RemapSelection("", nil, prev, nextRemap)
+	if id != "new" {
+		t.Fatalf("auto-select single: %s %v", id, counts)
+	}
+
+	id, counts = subscription.RemapSelection("", nil, prev, []subscription.Node{
+		{ID: "a", Host: "a.example", Port: 443, Protocol: "vless"},
+		{ID: "b", Host: "b.example", Port: 443, Protocol: "vless"},
+	})
+	if id != "" || counts != nil {
+		t.Fatalf("no auto-select for many: %s %v", id, counts)
 	}
 }

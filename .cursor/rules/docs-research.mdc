@@ -6,6 +6,7 @@ alwaysApply: false
 
 # Docs / research
 
+- Единый бэклог приоритетов: `docs/ROADMAP.md`.
 - Клиентские идеи из 3x-ui и план внедрения: `docs/research/3x-ui-client-ideas.md`.
 - Канвас-обзор в Cursor: `3x-ui-feature-study` (не заменяет markdown в git).
-- При реализации пункта из research — тесты + `make ci` (см. `quality-gate.mdc`).
+- При реализации пункта — тесты + `make ci` (см. `quality-gate.mdc`).

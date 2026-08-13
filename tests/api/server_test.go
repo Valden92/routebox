@@ -30,6 +30,11 @@ func newAPITest(t *testing.T) (*httptest.Server, *config.Store, *httptest.Server
 	subBody := "vless://bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb@api-test.example.com:443?encryption=none&security=tls&sni=api-test.example.com#APINode\n"
 	subSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Subscription-Userinfo", "upload=111; download=222; total=1000; expire=1893456000")
+		w.Header().Set("Profile-Title", "API Title")
+		w.Header().Set("Announce", "note")
+		w.Header().Set("Support-Url", "https://help.example")
+		w.Header().Set("Profile-Update-Interval", "12")
 		_, _ = io.WriteString(w, subBody)
 	}))
 	t.Cleanup(subSrv.Close)
@@ -106,6 +111,18 @@ func TestSubscriptionCRUDAndSelect(t *testing.T) {
 	if err := json.Unmarshal(raw, &sub); err != nil || sub.ID == "" {
 		t.Fatalf("%s", raw)
 	}
+	if sub.TrafficUpload != 111 || sub.TrafficDownload != 222 || sub.TrafficTotal != 1000 {
+		t.Fatalf("userinfo on add: %+v", sub)
+	}
+	if sub.CreatedAt.IsZero() || sub.LastRefresh.IsZero() {
+		t.Fatalf("timestamps on add: created=%v refresh=%v", sub.CreatedAt, sub.LastRefresh)
+	}
+	if sub.ProfileTitle != "API Title" || sub.Announce != "note" || sub.SupportURL != "https://help.example" {
+		t.Fatalf("profile on add: %+v", sub)
+	}
+	if sub.ProfileUpdateIntervalHours != 12 || sub.ExpireAt.IsZero() {
+		t.Fatalf("interval/expire on add: %+v", sub)
+	}
 
 	code, raw = doJSON(t, ts, http.MethodGet, "/api/subscriptions/", nil)
 	if code != 200 {
@@ -147,6 +164,55 @@ func TestSubscriptionCRUDAndSelect(t *testing.T) {
 		t.Fatalf("%+v", selected)
 	}
 
+	code, raw = doJSON(t, ts, http.MethodPost, "/api/subscriptions/", map[string]any{
+		"name": "other", "source": "text",
+		"content": "vless://cccccccc-cccc-cccc-cccc-cccccccccccc@other.example.com:443?encryption=none&security=tls&type=tcp#other",
+	})
+	if code != 200 {
+		t.Fatalf("add other: %d %s", code, raw)
+	}
+	var other config.Subscription
+	if err := json.Unmarshal(raw, &other); err != nil {
+		t.Fatal(err)
+	}
+	code, raw = doJSON(t, ts, http.MethodPost, "/api/subscriptions/"+other.ID+"/activate", nil)
+	if code != 200 {
+		t.Fatalf("activate: %d %s", code, raw)
+	}
+	got = store.Get()
+	if got.PersonalVPN.ActiveSubscriptionID != other.ID {
+		t.Fatalf("after activate want %q, got %q", other.ID, got.PersonalVPN.ActiveSubscriptionID)
+	}
+	for _, s := range got.Subscriptions {
+		if s.ID == sub.ID && s.SelectedNodeID != nodes[0].ID {
+			t.Fatalf("activate must not clear previous selected node: %+v", s)
+		}
+	}
+	code, raw = doJSON(t, ts, http.MethodPost, "/api/subscriptions/missing/activate", nil)
+	if code != 404 {
+		t.Fatalf("activate missing want 404, got %d %s", code, raw)
+	}
+
+	code, raw = doJSON(t, ts, http.MethodPost, "/api/subscriptions/"+sub.ID+"/refresh", nil)
+	if code != 200 {
+		t.Fatalf("refresh: %d %s", code, raw)
+	}
+	code, raw = doJSON(t, ts, http.MethodGet, "/api/subscriptions/", nil)
+	if code != 200 {
+		t.Fatalf("list after refresh: %d %s", code, raw)
+	}
+	_ = json.Unmarshal(raw, &list)
+	var refreshed *config.Subscription
+	for i := range list {
+		if list[i].ID == sub.ID {
+			refreshed = &list[i]
+			break
+		}
+	}
+	if refreshed == nil || refreshed.TrafficTotal != 1000 || refreshed.ProfileTitle != "API Title" {
+		t.Fatalf("meta after refresh: %+v", list)
+	}
+
 	code, raw = doJSON(t, ts, http.MethodPut, "/api/subscriptions/"+sub.ID, map[string]any{
 		"autoRefresh":            true,
 		"refreshIntervalMinutes": 30,
@@ -162,6 +228,16 @@ func TestSubscriptionCRUDAndSelect(t *testing.T) {
 	code, raw = doJSON(t, ts, http.MethodDelete, "/api/subscriptions/"+sub.ID, nil)
 	if code != 200 {
 		t.Fatalf("delete: %d %s", code, raw)
+	}
+	if len(store.Get().Subscriptions) != 1 || store.Get().Subscriptions[0].ID != other.ID {
+		t.Fatalf("%+v", store.Get().Subscriptions)
+	}
+	if store.Get().PersonalVPN.ActiveSubscriptionID != other.ID {
+		t.Fatalf("active should stay on other: %q", store.Get().PersonalVPN.ActiveSubscriptionID)
+	}
+	code, raw = doJSON(t, ts, http.MethodDelete, "/api/subscriptions/"+other.ID, nil)
+	if code != 200 {
+		t.Fatalf("delete other: %d %s", code, raw)
 	}
 	if len(store.Get().Subscriptions) != 0 {
 		t.Fatalf("%+v", store.Get().Subscriptions)
@@ -188,6 +264,9 @@ func TestAddSubscriptionTextAndURI(t *testing.T) {
 	if sub.URL != "" || sub.AutoRefresh {
 		t.Fatalf("local must not refresh: %+v", sub)
 	}
+	if sub.SelectedNodeID == "" {
+		t.Fatalf("single-node uri must auto-select: %+v", sub)
+	}
 	code, raw = doJSON(t, ts, http.MethodGet, "/api/subscriptions/"+sub.ID+"/nodes", nil)
 	if code != 200 {
 		t.Fatalf("nodes: %d %s", code, raw)
@@ -196,6 +275,9 @@ func TestAddSubscriptionTextAndURI(t *testing.T) {
 	_ = json.Unmarshal(raw, &nodes)
 	if len(nodes) != 1 || nodes[0].Host != "inline.example.com" {
 		t.Fatalf("%+v", nodes)
+	}
+	if sub.SelectedNodeID != nodes[0].ID {
+		t.Fatalf("selected %q want %q", sub.SelectedNodeID, nodes[0].ID)
 	}
 
 	code, raw = doJSON(t, ts, http.MethodPost, "/api/subscriptions/"+sub.ID+"/refresh", nil)
@@ -266,6 +348,27 @@ MIIB
 	}
 	if sub.URL != "" || sub.AutoRefresh {
 		t.Fatalf("local must not refresh: %+v", sub)
+	}
+	if sub.ImportSummary != "OPENVPN · ovpn.example.com:1194 · UDP · login" {
+		t.Fatalf("importSummary %q", sub.ImportSummary)
+	}
+	if sub.SelectedNodeID == "" {
+		t.Fatalf("single ovpn must auto-select: %+v", sub)
+	}
+	code, raw = doJSON(t, ts, http.MethodGet, "/api/subscriptions/", nil)
+	if code != 200 {
+		t.Fatalf("list: %d %s", code, raw)
+	}
+	var listed []config.Subscription
+	_ = json.Unmarshal(raw, &listed)
+	if len(listed) != 1 || listed[0].ImportSummary != sub.ImportSummary {
+		t.Fatalf("list enrich %+v", listed)
+	}
+	if listed[0].NodeCount != 1 {
+		t.Fatalf("nodeCount %d", listed[0].NodeCount)
+	}
+	if listed[0].Source != "ovpn" {
+		t.Fatalf("source %q", listed[0].Source)
 	}
 	code, raw = doJSON(t, ts, http.MethodGet, "/api/subscriptions/"+sub.ID+"/nodes", nil)
 	if code != 200 {

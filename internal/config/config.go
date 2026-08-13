@@ -43,12 +43,27 @@ type Subscription struct {
 	ID                     string         `json:"id"`
 	Name                   string         `json:"name"`
 	URL                    string         `json:"url"`
+	Source                 string         `json:"source,omitempty"`       // url|text|uri|ovpn
 	RefreshIntervalMinutes int            `json:"refreshIntervalMinutes"` // при autoRefresh; 0 = только вручную
 	AutoRefresh            bool           `json:"autoRefresh"`
+	CreatedAt              time.Time      `json:"createdAt,omitempty"`
 	LastRefresh            time.Time      `json:"lastRefresh,omitempty"`
 	SelectedNodeID         string         `json:"selectedNodeId,omitempty"`
 	NodeSelectCounts       map[string]int `json:"nodeSelectCounts,omitempty"` // nodeId → число выборов
 	Enabled                bool           `json:"enabled"`
+	// Метаданные провайдера (Subscription-Userinfo и др.) после fetch URL.
+	TrafficUpload              int64     `json:"trafficUpload,omitempty"`
+	TrafficDownload            int64     `json:"trafficDownload,omitempty"`
+	TrafficTotal               int64     `json:"trafficTotal,omitempty"`
+	ExpireAt                   time.Time `json:"expireAt,omitempty"`
+	ProfileTitle               string    `json:"profileTitle,omitempty"`
+	Announce                   string    `json:"announce,omitempty"`
+	SupportURL                 string    `json:"supportUrl,omitempty"`
+	ProfileUpdateIntervalHours int       `json:"profileUpdateIntervalHours,omitempty"`
+	// ImportSummary — для локального импорта (.ovpn и т.п.), без HTTP-заголовков.
+	ImportSummary string `json:"importSummary,omitempty"`
+	// NodeCount — только в ответах API (из кэша узлов), в settings не хранится осмысленно.
+	NodeCount int `json:"nodeCount,omitempty"`
 }
 
 func (s Subscription) RefreshInterval() time.Duration {

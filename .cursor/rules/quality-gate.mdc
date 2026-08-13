@@ -31,3 +31,14 @@ make test
 - Если нет `golangci-lint` / deps: `make lint-tools`, затем повторить.
 - Clippy (`make lint-rust`) — только если меняли `desktop/src-tauri/**` (как `lint-rust.yml`).
 - Не коммитить без явной просьбы пользователя; quality gate ≠ commit.
+
+## GitNexus (обязательно перед завершением)
+
+После правок **кода** (не только комментариев/опечаток в доках) актуализировать связи:
+
+```bash
+npx gitnexus analyze
+```
+
+Если в `.gitnexus/meta.json` → `stats.embeddings` > 0 — добавить `--embeddings`, иначе embeddings сотрутся.
+Без переиндексации `impact` / `query` / `context` для следующих агентов устареют.
