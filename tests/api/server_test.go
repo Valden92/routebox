@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -406,15 +407,57 @@ func TestVersionHasOpenVPNFeature(t *testing.T) {
 	var ver map[string]any
 	_ = json.Unmarshal(raw, &ver)
 	feats, _ := ver["features"].([]any)
-	found := false
+	need := map[string]bool{"openvpn-import": false, "clash-import": false}
 	for _, f := range feats {
-		if f == "openvpn-import" {
-			found = true
-			break
+		s, _ := f.(string)
+		if _, ok := need[s]; ok {
+			need[s] = true
 		}
 	}
-	if !found {
-		t.Fatalf("openvpn-import missing: %v", feats)
+	for k, ok := range need {
+		if !ok {
+			t.Fatalf("%s missing: %v", k, feats)
+		}
+	}
+}
+
+func TestAddSubscriptionClash(t *testing.T) {
+	ts, store, _ := newAPITest(t)
+	rawYAML, err := os.ReadFile(filepath.Join("..", "subscription", "testdata", "clash-sample.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, raw := doJSON(t, ts, http.MethodPost, "/api/subscriptions/", map[string]any{
+		"name": "clash-sub", "source": "clash", "content": string(rawYAML),
+	})
+	if code != 200 {
+		t.Fatalf("clash: %d %s", code, raw)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["source"] != "clash" {
+		t.Fatalf("source %+v", resp)
+	}
+	if int(resp["nodeCount"].(float64)) != 3 {
+		t.Fatalf("nodeCount %+v", resp)
+	}
+	if int(resp["skipped"].(float64)) != 1 {
+		t.Fatalf("skipped %+v", resp)
+	}
+	id, _ := resp["id"].(string)
+	if id == "" || len(store.Get().Subscriptions) != 1 {
+		t.Fatalf("store %+v", store.Get().Subscriptions)
+	}
+	code, raw = doJSON(t, ts, http.MethodGet, "/api/subscriptions/"+id+"/nodes", nil)
+	if code != 200 {
+		t.Fatalf("nodes: %d %s", code, raw)
+	}
+	var nodes []subscription.Node
+	_ = json.Unmarshal(raw, &nodes)
+	if len(nodes) != 3 {
+		t.Fatalf("%+v", nodes)
 	}
 }
 

@@ -55,7 +55,7 @@ func EndpointLabel(n Node) string {
 	return label
 }
 
-// NormalizeSource приводит source из API к канону: url|text|uri|ovpn.
+// NormalizeSource приводит source из API к канону: url|text|uri|ovpn|clash.
 func NormalizeSource(source string) string {
 	switch strings.ToLower(strings.TrimSpace(source)) {
 	case "url":
@@ -64,6 +64,8 @@ func NormalizeSource(source string) string {
 		return "uri"
 	case "ovpn":
 		return "ovpn"
+	case "clash":
+		return "clash"
 	case "text", "file":
 		return "text"
 	default:
@@ -113,6 +115,16 @@ func ParseBody(body []byte) ([]Node, error) {
 	text := strings.TrimSpace(string(body))
 	if looksLikeHTML(text) {
 		return nil, fmt.Errorf("подписка вернула HTML (страница входа), а не список серверов — проверьте URL или User-Agent")
+	}
+	if LooksLikeClash(text) {
+		nodes, _, err := ParseClash([]byte(text))
+		if err == nil && len(nodes) > 0 {
+			return nodes, nil
+		}
+		if err != nil && !strings.Contains(err.Error(), "некорректный Clash YAML") {
+			// YAML похож на Clash, но прокси не разобрались — не падаем в line/base64 вслепую.
+			return nil, err
+		}
 	}
 	if nodes := parseLines(text); len(nodes) > 0 {
 		return nodes, nil

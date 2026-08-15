@@ -66,6 +66,29 @@ func TestTCPBatchTCPFailsOnClosedPort(t *testing.T) {
 	}
 }
 
+func TestTCPBatchPreferICMPUsesICMPEvenForVLESS(t *testing.T) {
+	// С PreferICMP закрытый TCP-порт не важен: идём ICMP до host.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	n := subscription.Node{
+		ID: "vless-icmp", Protocol: "vless",
+		Host: "127.0.0.1", Port: 1,
+	}
+	res := ping.TCPBatch(ctx, "", []subscription.Node{n}, 1, ping.BatchOptions{PreferICMP: true})
+	if len(res) != 1 {
+		t.Fatalf("%+v", res)
+	}
+	if !res[0].OK {
+		t.Skipf("ICMP до 127.0.0.1 недоступен: %s", res[0].Error)
+	}
+	if res[0].Mode != "icmp" {
+		t.Fatalf("mode %+v", res[0])
+	}
+	if res[0].LatencyMs < 0 {
+		t.Fatalf("latency %+v", res[0])
+	}
+}
+
 func TestTCPBatchOpenVPNTCPUsesTCP(t *testing.T) {
 	// openvpn+tcp → ProbeMode tcp → закрытый порт = fail (не ICMP success).
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

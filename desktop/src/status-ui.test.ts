@@ -4,6 +4,8 @@ import {
   isDaemonApiOutdated,
   personalConnectGate,
   personalStatusFlags,
+  personalVpnBusyButtonLabels,
+  personalVpnBusyMessage,
   systemVpnConnectingHint,
   systemVpnState,
 } from "./status-ui";
@@ -35,6 +37,17 @@ describe("systemVpnConnectingHint", () => {
     expect(systemVpnConnectingHint("AUTH_DIALOG")).toBe("Ожидание MFA");
     expect(systemVpnConnectingHint("activating")).toBe("Подключение…");
     expect(systemVpnConnectingHint(undefined)).toBe("Подключение…");
+  });
+});
+
+describe("personalVpnBusyMessage / labels", () => {
+  it("maps busy states", () => {
+    expect(personalVpnBusyMessage(null)).toBeNull();
+    expect(personalVpnBusyMessage("connect")).toMatch(/включение/i);
+    expect(personalVpnBusyMessage("disconnect")).toMatch(/выключение/i);
+    expect(personalVpnBusyButtonLabels("connect").on).toBe("Включение…");
+    expect(personalVpnBusyButtonLabels("disconnect").off).toBe("Выключение…");
+    expect(personalVpnBusyButtonLabels(null)).toEqual({ on: "Включить", off: "Выключить" });
   });
 });
 

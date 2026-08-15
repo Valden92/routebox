@@ -149,6 +149,7 @@ func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
 			"auto-routing-observer",
 			"subscription-import",
 			"openvpn-import",
+			"clash-import",
 		},
 	})
 }
@@ -272,7 +273,7 @@ func (s *Server) personalConnect(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_config", err.Error())
 		return
 	}
-	if err := singbox.ProbeProxyReachable(node, st.MainInterface); err != nil {
+	if err := singbox.ProbeProxyReachable(node, st.MainInterface, s.SingBox.Running()); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -451,7 +452,7 @@ func selectionCountsChanged(a, b map[string]int) bool {
 type addSubReq struct {
 	Name            string `json:"name"`
 	URL             string `json:"url"`
-	Source          string `json:"source"`  // url | text | uri | ovpn (file на клиенте → text|ovpn)
+	Source          string `json:"source"`  // url | text | uri | ovpn | clash (file на клиенте → text|ovpn|clash)
 	Content         string `json:"content"` // тело для text/uri/ovpn
 	Username        string `json:"username"`
 	Password        string `json:"password"`
@@ -484,6 +485,7 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 
 	var nodes []subscription.Node
 	var fetchMeta subscription.Meta
+	var skipped int
 	switch req.Source {
 	case "url":
 		if !subscription.IsRemoteURL(req.URL) {
@@ -507,12 +509,23 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "вставьте содержимое подписки или share-ссылку", 400)
 			return
 		}
-		parsed, err := subscription.ParseBody([]byte(req.Content))
-		if err != nil {
-			http.Error(w, err.Error(), 400)
-			return
+		if subscription.LooksLikeClash(req.Content) {
+			parsed, skip, err := subscription.ParseClash([]byte(req.Content))
+			if err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			nodes = parsed
+			skipped = skip
+			req.Source = "clash"
+		} else {
+			parsed, err := subscription.ParseBody([]byte(req.Content))
+			if err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			nodes = parsed
 		}
-		nodes = parsed
 		req.URL = ""
 		req.AutoRefresh = false
 	case "ovpn":
@@ -536,14 +549,28 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 		nodes = []subscription.Node{n}
 		req.URL = ""
 		req.AutoRefresh = false
+	case "clash":
+		if req.Content == "" {
+			http.Error(w, "вставьте Clash/Mihomo YAML (секция proxies)", 400)
+			return
+		}
+		parsed, skip, err := subscription.ParseClash([]byte(req.Content))
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		nodes = parsed
+		skipped = skip
+		req.URL = ""
+		req.AutoRefresh = false
 	default:
-		http.Error(w, "неизвестный source (url|text|uri|ovpn)", 400)
+		http.Error(w, "неизвестный source (url|text|uri|ovpn|clash)", 400)
 		return
 	}
 
 	nodes = subscription.FilterValidNodes(nodes)
 	if len(nodes) == 0 {
-		http.Error(w, "в подписке не найдено серверов (vless/vmess/openvpn/…)", 400)
+		http.Error(w, "в подписке не найдено серверов (vless/ss/hysteria2/openvpn/…)", 400)
 		return
 	}
 
@@ -591,7 +618,22 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	writeJSON(w, sub)
+	sub.NodeCount = len(nodes)
+	writeJSON(w, mergeSubImportResponse(sub, len(nodes), skipped))
+}
+
+func mergeSubImportResponse(sub config.Subscription, nodeCount, skipped int) map[string]any {
+	b, _ := json.Marshal(sub)
+	var out map[string]any
+	_ = json.Unmarshal(b, &out)
+	if out == nil {
+		out = map[string]any{}
+	}
+	out["nodeCount"] = nodeCount
+	if skipped > 0 {
+		out["skipped"] = skipped
+	}
+	return out
 }
 
 func (s *Server) refreshSubscription(w http.ResponseWriter, r *http.Request) {
@@ -807,7 +849,10 @@ func (s *Server) pingNodes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 404)
 		return
 	}
-	results := ping.TCPBatch(r.Context(), st.MainInterface, c.Nodes, 24)
+	results := ping.TCPBatch(r.Context(), st.MainInterface, c.Nodes, 24, ping.BatchOptions{
+		// auto_redirect делает TCP dial «мгновенным» (~0 ms) — берём ICMP до host.
+		PreferICMP: s.SingBox.Running(),
+	})
 	writeJSON(w, results)
 }
 

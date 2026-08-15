@@ -21,7 +21,7 @@ import {
   type SubImportSource,
 } from "./add-subscription";
 import { formatPing } from "./ping-label";
-import { orderNodes } from "./nodes-sort";
+import { orderNodes, retainPingsForNodes } from "./nodes-sort";
 import {
   filterRules,
   formatRefreshLabel,
@@ -37,8 +37,11 @@ import {
   isDaemonApiOutdated,
   personalConnectGate,
   personalStatusFlags,
+  personalVpnBusyButtonLabels,
+  personalVpnBusyMessage,
   systemVpnConnectingHint,
   systemVpnState,
+  type PersonalVpnBusy,
 } from "./status-ui";
 import { escapeHtml, routerModeHint, routerModeLabel, routerPriorityLabel } from "./ui-labels";
 
@@ -213,6 +216,10 @@ function setSystemVpnFastPoll(on: boolean) {
 }
 
 function updatePersonalVpnButtons(configured: boolean, running: boolean) {
+  if (personalVpnBusy) {
+    applyPersonalVpnBusyUi(personalVpnBusy);
+    return;
+  }
   if (!configured) {
     updateVpnToggleButtons(el("#btn-personal-on"), el("#btn-personal-off"), {
       active: false,
@@ -226,6 +233,40 @@ function updatePersonalVpnButtons(configured: boolean, running: boolean) {
   });
 }
 
+let personalVpnBusy: PersonalVpnBusy = null;
+
+function applyPersonalVpnBusyUi(busy: PersonalVpnBusy) {
+  const onBtn = el<HTMLButtonElement>("#btn-personal-on");
+  const offBtn = el<HTMLButtonElement>("#btn-personal-off");
+  const progress = el("#personal-vpn-progress");
+  const labels = personalVpnBusyButtonLabels(busy);
+  const msg = personalVpnBusyMessage(busy);
+  onBtn.textContent = labels.on;
+  offBtn.textContent = labels.off;
+  if (msg) {
+    progress.textContent = msg;
+    progress.classList.remove("hidden");
+    onBtn.disabled = true;
+    offBtn.disabled = true;
+    onBtn.classList.add("secondary");
+    offBtn.classList.add("secondary");
+  } else {
+    progress.textContent = "";
+    progress.classList.add("hidden");
+  }
+}
+
+function setPersonalVpnBusy(busy: PersonalVpnBusy) {
+  personalVpnBusy = busy;
+  applyPersonalVpnBusyUi(busy);
+  if (!busy) {
+    // Вернуть обычные подписи; disabled выставит refreshStatus / updatePersonalVpnButtons.
+    const labels = personalVpnBusyButtonLabels(null);
+    el("#btn-personal-on").textContent = labels.on;
+    el("#btn-personal-off").textContent = labels.off;
+  }
+}
+
 async function refreshStatus() {
   const s = await api<StatusResponse>("/api/status");
   cachedStatus = s;
@@ -237,7 +278,7 @@ async function refreshStatus() {
       <dt>Интерфейс</dt><dd>${s.internet.link.name} (${s.internet.link.state})</dd>
       <dt>Локальный IP</dt><dd>${s.internet.link.ipv4 ?? "—"}</dd>
       <dt>Публичный IP</dt><dd>${s.internet.publicIp ?? "—"}</dd>
-      <dt>Задержка</dt><dd>${s.internet.latencyMs != null ? formatPing(s.internet.latencyMs) : "—"}</dd>
+      <dt>Пинг</dt><dd>${s.internet.latencyMs != null ? formatPing(s.internet.latencyMs) : "—"}</dd>
     </dl>
     ${s.internet.error ? `<p class="${s.internet.up ? "muted" : "err"}">${escapeHtml(s.internet.error)}</p>` : ""}
   `;
@@ -320,30 +361,19 @@ function setAddSource(source: SubImportSource) {
     const elPanel = panel as HTMLElement;
     elPanel.classList.toggle("hidden", elPanel.dataset.panel !== source);
   });
-  const refreshRow = el("#add-refresh-row");
   const hint = el("#add-sub-hint");
   const remote = source === "url";
-  refreshRow.querySelectorAll("input").forEach((inp) => {
-    (inp as HTMLInputElement).disabled = !remote;
-  });
-  el<HTMLInputElement>("#add-auto-refresh")
-    .closest(".check-label")
-    ?.classList.toggle("is-disabled", !remote);
-  el<HTMLInputElement>("#add-refresh-minutes")
-    .closest(".interval-label")
-    ?.classList.toggle(
-      "is-disabled",
-      !remote || !el<HTMLInputElement>("#add-auto-refresh").checked,
-    );
+  el("#add-refresh-controls").classList.toggle("hidden", !remote);
   if (remote) {
+    el<HTMLInputElement>("#add-auto-refresh").disabled = false;
     hint.textContent = "Снимите галочку — обновлять подписку только кнопкой «Обновить».";
     syncAddRefreshInputs();
   } else if (source === "file") {
-    hint.textContent =
-      "Автообновление для файла недоступно. Чтобы обновлять по сети — добавьте URL.";
+    hint.textContent = "Локальный файл. Чтобы обновлять по сети — добавьте URL.";
+  } else if (source === "text") {
+    hint.textContent = "Можно вставить URI-список, base64 или Clash YAML — формат определится сам.";
   } else {
-    hint.textContent =
-      "Локальный импорт: автообновление недоступно. Чтобы обновлять по сети — добавьте URL.";
+    hint.textContent = "Локальный импорт. Чтобы обновлять по сети — добавьте URL.";
   }
   void syncOvpnAuthFields();
 }
@@ -509,8 +539,8 @@ function renderNodesList(
       showToast("Сервер выбран");
       hidePersonalSetupBanner();
       await refreshStatus();
+      // loadSubscriptions восстановит раскрытый список и сохранит пинги из кэша.
       await loadSubscriptions();
-      if (expandedSubId === subId) await expandSubscription(subId, true);
     });
   });
 }
@@ -561,17 +591,20 @@ async function expandSubscription(id: string, forceOpen = false) {
       list.innerHTML = `<li class="muted">Серверов нет — нажмите «Обновить подписку»</li>`;
       return;
     }
+    const pings = retainPingsForNodes(nodes, pingsCache.get(id));
     renderNodesList(
       list,
       id,
       nodes,
-      null,
+      pings,
       resolveSelectedNodeId(id, sub),
       getNodeSort(id),
       sub?.nodeSelectCounts ?? {},
     );
-    cacheSubNodes(id, nodes, null, sub);
-    showToast(`Загружено серверов: ${nodes.length}`);
+    cacheSubNodes(id, nodes, pings, sub);
+    if (!forceOpen) {
+      showToast(`Загружено серверов: ${nodes.length}`);
+    }
   } catch (e) {
     list.innerHTML = `<li class="err">${escapeHtml(e instanceof Error ? e.message : "Ошибка загрузки")}</li>`;
     showToast(e instanceof Error ? e.message : "Ошибка", true);
@@ -586,6 +619,9 @@ async function deleteSubscription(id: string, name: string) {
   });
   if (expandedSubId === id) expandedSubId = "";
   if (activeSubId === id) activeSubId = "";
+  nodesCache.delete(id);
+  pingsCache.delete(id);
+  subsByIdCache.delete(id);
   showToast("Подписка удалена");
   await refreshStatus();
   await loadSubscriptions();
@@ -695,17 +731,21 @@ async function loadSubscriptions() {
             <button type="button" class="secondary small btn-danger" data-delete="${s.id}">Удалить</button>
           </div>
         </div>
-        <div class="sub-settings" data-id="${s.id}">
-          <label class="check-label${!remote ? " is-disabled" : ""}">
-            <input type="checkbox" data-auto="${s.id}" ${s.autoRefresh && remote ? "checked" : ""} ${remote ? "" : "disabled"} />
+        ${
+          remote
+            ? `<div class="sub-settings" data-id="${s.id}">
+          <label class="check-label">
+            <input type="checkbox" data-auto="${s.id}" ${s.autoRefresh ? "checked" : ""} />
             Авто
           </label>
-          <label class="interval-label${!remote || !s.autoRefresh ? " is-disabled" : ""}">
+          <label class="interval-label${!s.autoRefresh ? " is-disabled" : ""}">
             каждые
-            <input type="number" data-mins="${s.id}" min="5" max="10080" value="${s.refreshIntervalMinutes || 60}" ${remote && s.autoRefresh ? "" : "disabled"} />
+            <input type="number" data-mins="${s.id}" min="5" max="10080" value="${s.refreshIntervalMinutes || 60}" ${s.autoRefresh ? "" : "disabled"} />
             мин.
           </label>
-        </div>
+        </div>`
+            : ""
+        }
         <div class="sub-servers${expanded ? "" : " hidden"}">
           <div class="sub-servers-toolbar">
             ${
@@ -1027,6 +1067,7 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   el("#btn-personal-on").addEventListener("click", async () => {
+    if (personalVpnBusy) return;
     const ready = await getPersonalReadiness();
     const gate = personalConnectGate(ready);
     if (gate === "host_not_ready") {
@@ -1037,11 +1078,11 @@ window.addEventListener("DOMContentLoaded", () => {
       goToPersonalSetup(ready.message ?? "Добавьте подписку и выберите сервер");
       return;
     }
+    setPersonalVpnBusy("connect");
     try {
       const res = await api<{ running: boolean }>("/api/personal-vpn/connect", {
         method: "POST",
       });
-      await refreshStatus();
       if (res.running) {
         showToast("Личный VPN включён");
       } else {
@@ -1054,19 +1095,26 @@ window.addEventListener("DOMContentLoaded", () => {
       }
       if (e instanceof ApiError && e.status === 412) {
         showToast(e.message || "Выполните: make sync", true);
-        await refreshStatus();
         return;
       }
       showToast(e instanceof Error ? e.message : "Ошибка", true);
+    } finally {
+      setPersonalVpnBusy(null);
+      try {
+        await refreshStatus();
+      } catch {
+        /* ignore */
+      }
     }
   });
 
   el("#btn-personal-off").addEventListener("click", async () => {
+    if (personalVpnBusy) return;
+    setPersonalVpnBusy("disconnect");
     try {
       const res = await api<{ status: string }>("/api/personal-vpn/disconnect", {
         method: "POST",
       });
-      await refreshStatus();
       showToast(
         res.status === "personal_disabled_deferred"
           ? "Личный VPN выключен в приложении. Чтобы не сбрасывать системный VPN, сетевой конфиг применится позже."
@@ -1074,6 +1122,13 @@ window.addEventListener("DOMContentLoaded", () => {
       );
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Ошибка", true);
+    } finally {
+      setPersonalVpnBusy(null);
+      try {
+        await refreshStatus();
+      } catch {
+        /* ignore */
+      }
     }
   });
 
@@ -1150,7 +1205,15 @@ window.addEventListener("DOMContentLoaded", () => {
       expandedSubId = sub.id;
       await loadSubscriptions();
       await expandSubscription(sub.id, true);
-      showToast(`Загружено серверов — выберите узел в списке`);
+      const n = Number(sub.nodeCount) || 0;
+      const skipped = Number(sub.skipped) || 0;
+      if (n > 0 && skipped > 0) {
+        showToast(`Загружено серверов: ${n}, пропущено: ${skipped}`);
+      } else if (n > 0) {
+        showToast(`Загружено серверов: ${n}`);
+      } else {
+        showToast("Подписка добавлена — выберите узел в списке");
+      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Ошибка", true);
     } finally {

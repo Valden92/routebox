@@ -2,7 +2,7 @@
 
 Десктопное приложение для Linux: **Tauri UI** + **Go-демон** с трёхуровневой маршрутизацией трафика. Пользователь управляет личным VPN из приложения; системный (рабочий) VPN — только через NetworkManager/GNOME.
 
-**Индекс GitNexus:** 1093 символа, 2937 связей, 89 execution flows (проиндексировано 2026-08-13). Переиндексация: `npx gitnexus analyze` (embeddings = 0; `--embeddings` только если нужны).
+**Индекс GitNexus:** 1132 символа, 3076 связей, 92 execution flows (проиндексировано 2026-08-15). Переиндексация: `npx gitnexus analyze` (embeddings = 0; `--embeddings` только если нужны).
 
 ---
 
@@ -100,7 +100,7 @@ ip link show tun100
 | POST | `/api/personal-vpn/disconnect` | stop + recover маршрутов |
 | POST | `/api/personal-vpn/reapply` | Перезапись конфига без смены узла |
 | GET | `/api/personal-vpn/status` | Детальный статус |
-| * | `/api/subscriptions/*` | CRUD, refresh, ping, select, **activate**; `source`: url\|text\|uri\|**ovpn**; meta Userinfo/Profile-* |
+| * | `/api/subscriptions/*` | CRUD, refresh, ping, select, **activate**; `source`: url\|text\|uri\|**ovpn**\|**clash**; meta Userinfo/Profile-* |
 | * | `/api/rules/*` | Правила доменов/приложений |
 | GET | `/api/apps` | Скан процессов (Linux) |
 | POST | `/api/probe/site` | Проверка URL по путям |
@@ -261,7 +261,7 @@ npx gitnexus analyze --embeddings  # только если нужны embeddings
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **vpn-router** (1093 symbols, 2937 relationships, 89 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **vpn-router** (1132 symbols, 3076 relationships, 92 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -324,16 +324,14 @@ This project is indexed by GitNexus as **vpn-router** (1093 symbols, 2937 relati
 ## Self-Check Before Finishing
 
 Before completing any code modification task, verify:
-1. New/changed logic has unit tests; CI-equivalent checks are green (`make check-fmt && make lint && make test`)
-2. `gitnexus_impact` was run for all modified symbols
-3. No HIGH/CRITICAL risk warnings were ignored
-4. `gitnexus_detect_changes()` confirms changes match expected scope
-5. All d=1 (WILL BREAK) dependents were updated
-6. **GitNexus index refreshed:** `npx gitnexus analyze` (add `--embeddings` if `stats.embeddings` > 0)
+1. `gitnexus_impact` was run for all modified symbols
+2. No HIGH/CRITICAL risk warnings were ignored
+3. `gitnexus_detect_changes()` confirms changes match expected scope
+4. All d=1 (WILL BREAK) dependents were updated
 
 ## Keeping the Index Fresh
 
-After finishing a task that changed code (and after commits/merges), re-run analyze so MCP tools stay accurate:
+After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
 
 ```bash
 npx gitnexus analyze
@@ -347,7 +345,8 @@ npx gitnexus analyze --embeddings
 
 To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.embeddings` field shows the count (0 means no embeddings). **Running analyze without `--embeddings` will delete any previously generated embeddings.**
 
-> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`. In Cursor the agent must run analyze explicitly at task end.
+> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
+
 ## CLI
 
 | Task | Read this skill file |

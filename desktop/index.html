@@ -48,6 +48,7 @@
               <button type="button" id="btn-personal-on">Включить</button>
               <button type="button" id="btn-personal-off">Выключить</button>
             </div>
+            <p id="personal-vpn-progress" class="muted card-progress hidden" aria-live="polite"></p>
           </article>
         </div>
       </section>
@@ -70,10 +71,14 @@
               <textarea
                 name="content"
                 id="add-sub-content"
-                rows="5"
-                placeholder="Список vless://… / ss://… или base64 целиком"
+                rows="6"
+                placeholder="vless://… / ss://… / base64 или Clash/Mihomo YAML (proxies: …)"
               ></textarea>
             </div>
+            <p class="muted file-picker-formats">
+              Формат определяется автоматически: список URI, base64 или Clash YAML
+              (<code>proxies</code>: vless / ss / hysteria2).
+            </p>
           </div>
           <div class="sub-source-panel hidden" data-panel="uri">
             <input name="uri" id="add-sub-uri" placeholder="vless://… или hy2://…" />
@@ -84,14 +89,14 @@
                 type="file"
                 id="add-sub-file"
                 class="file-picker-input"
-                accept=".txt,.conf,.base64,.ovpn,text/plain"
+                accept=".txt,.conf,.base64,.ovpn,.yaml,.yml,text/plain,application/x-yaml"
               />
               <button type="button" class="secondary" id="add-sub-file-btn">Выбрать файл</button>
               <span class="muted file-picker-name" id="add-sub-file-name">файл не выбран</span>
             </div>
             <p class="muted file-picker-formats">
-              Форматы: <code>.txt</code>, <code>.conf</code>, <code>.base64</code> (список
-              vless/ss/hy2) или <code>.ovpn</code> (OpenVPN, сертификаты внутри файла)
+              Форматы: <code>.txt</code> / <code>.conf</code> (URI), <code>.yaml</code> /
+              <code>.yml</code> (Clash), <code>.ovpn</code> (OpenVPN)
             </p>
           </div>
           <div id="add-ovpn-auth" class="sub-form-row hidden">
@@ -110,22 +115,24 @@
             />
           </div>
           <div class="sub-form-row" id="add-refresh-row">
-            <label class="check-label">
-              <input type="checkbox" name="autoRefresh" id="add-auto-refresh" checked />
-              Автообновление
-            </label>
-            <label class="interval-label">
-              каждые
-              <input
-                type="number"
-                name="refreshMinutes"
-                id="add-refresh-minutes"
-                min="5"
-                max="10080"
-                value="60"
-              />
-              мин.
-            </label>
+            <span id="add-refresh-controls" class="sub-refresh-controls">
+              <label class="check-label">
+                <input type="checkbox" name="autoRefresh" id="add-auto-refresh" checked />
+                Автообновление
+              </label>
+              <label class="interval-label">
+                каждые
+                <input
+                  type="number"
+                  name="refreshMinutes"
+                  id="add-refresh-minutes"
+                  min="5"
+                  max="10080"
+                  value="60"
+                />
+                мин.
+              </label>
+            </span>
             <button type="submit">Добавить</button>
           </div>
           <p class="muted sub-form-hint" id="add-sub-hint">

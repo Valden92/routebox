@@ -149,6 +149,12 @@ body {
   margin-top: 0.75rem;
 }
 
+.card-progress {
+  margin: 0.55rem 0 0;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 button {
   background: var(--accent);
   color: #fff;
@@ -352,6 +358,13 @@ select optgroup {
 
 .sub-form-row {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.sub-refresh-controls {
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.65rem;

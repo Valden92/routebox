@@ -23,11 +23,12 @@ func TestProbeOneDispatchesByMode(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	_ = probeOne(ctx, "", subscription.Node{ID: "1", Protocol: "vless", Host: "h", Port: 443})
-	_ = probeOne(ctx, "", subscription.Node{ID: "2", Protocol: "openvpn", Network: "udp", Host: "h", Port: 1194})
-	_ = probeOne(ctx, "", subscription.Node{ID: "3", Protocol: "openvpn", Network: "tcp", Host: "h", Port: 443})
+	_ = probeOne(ctx, "", subscription.Node{ID: "1", Protocol: "vless", Host: "h", Port: 443}, false)
+	_ = probeOne(ctx, "", subscription.Node{ID: "2", Protocol: "openvpn", Network: "udp", Host: "h", Port: 1194}, false)
+	_ = probeOne(ctx, "", subscription.Node{ID: "3", Protocol: "openvpn", Network: "tcp", Host: "h", Port: 443}, false)
+	_ = probeOne(ctx, "", subscription.Node{ID: "4", Protocol: "vless", Host: "h", Port: 443}, true)
 
-	if tcpCalls != 2 || icmpCalls != 1 {
+	if tcpCalls != 2 || icmpCalls != 2 {
 		t.Fatalf("tcp=%d icmp=%d", tcpCalls, icmpCalls)
 	}
 }

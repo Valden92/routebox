@@ -1,4 +1,4 @@
-/** Качественная оценка TCP-пинга (мс) */
+/** Качественная оценка пинга до хоста (мс). При активном VPN — ICMP, иначе TCP connect. */
 export type PingLevel = "low" | "medium" | "high" | "very_high";
 
 const LABELS: Record<PingLevel, string> = {
