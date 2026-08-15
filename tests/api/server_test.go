@@ -407,7 +407,7 @@ func TestVersionHasOpenVPNFeature(t *testing.T) {
 	var ver map[string]any
 	_ = json.Unmarshal(raw, &ver)
 	feats, _ := ver["features"].([]any)
-	need := map[string]bool{"openvpn-import": false, "clash-import": false}
+	need := map[string]bool{"openvpn-import": false, "clash-import": false, "qr-import": false}
 	for _, f := range feats {
 		s, _ := f.(string)
 		if _, ok := need[s]; ok {

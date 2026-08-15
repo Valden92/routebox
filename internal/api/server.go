@@ -150,6 +150,7 @@ func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
 			"subscription-import",
 			"openvpn-import",
 			"clash-import",
+			"qr-import",
 		},
 	})
 }

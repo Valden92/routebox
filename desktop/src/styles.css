@@ -326,6 +326,10 @@ select optgroup {
   background: var(--card);
 }
 
+.qr-import-actions {
+  margin-bottom: 0.35rem;
+}
+
 .file-picker-input {
   position: absolute;
   width: 1px;

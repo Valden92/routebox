@@ -1,5 +1,5 @@
 /** Способы добавления подписки в UI / API. */
-export type SubImportSource = "url" | "text" | "uri" | "file" | "ovpn" | "clash";
+export type SubImportSource = "url" | "text" | "uri" | "file" | "ovpn" | "clash" | "qr";
 
 export type AddSubscriptionInput = {
   name: string;
@@ -42,6 +42,9 @@ export function looksLikeClash(content: string, fileName?: string): boolean {
 export function buildAddSubscriptionBody(input: AddSubscriptionInput): Record<string, unknown> {
   const name = input.name.trim();
   let source: string = input.source;
+  if (source === "qr") {
+    throw new Error("QR нужно распознать до отправки формы");
+  }
   if (source === "file") {
     if (looksLikeOvpn(input.content ?? "", input.fileName)) {
       source = "ovpn";
