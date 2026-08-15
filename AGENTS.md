@@ -45,7 +45,7 @@ make reset-host # сбросить хост-настройку; затем сн�
 | sing-box | `internal/singbox/` | Генерация конфига, start/stop, coexist, recover; pin **≥ 1.14.0-beta** (OpenVPN endpoint) |
 | Системный VPN (read-only) | `internal/nm/workvpn.go` | Статус через NM, **без connect/disconnect** |
 | Настройки | `internal/config/config.go` | JSON в `settings.json`, шифрование |
-| Подписки | `internal/subscription/` | VLESS/Hysteria2/SS + **OpenVPN**; fetch meta; `RemapSelection` + автовыбор одного узла |
+| Подписки | `internal/subscription/` | VLESS/Hysteria2/SS + **OpenVPN** + Clash; QR в UI (`desktop/src/qr-import.ts`); fetch meta; `RemapSelection` + автовыбор одного узла |
 | UI | `desktop/src/main.ts`, `api.ts`, `index.html` | Карточки статуса, личный VPN |
 | Хост | `scripts/configure-host-inner.sh`, `polkit-vpn-router.rules` | setcap, NM drop-in, polkit resolve1 только для `tun100` |
 
@@ -261,7 +261,7 @@ npx gitnexus analyze --embeddings  # только если нужны embeddings
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **vpn-router** (1132 symbols, 3076 relationships, 92 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **vpn-router** (1170 symbols, 3192 relationships, 95 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

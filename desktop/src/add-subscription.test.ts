@@ -106,6 +106,18 @@ describe("buildAddSubscriptionBody", () => {
       refreshIntervalMinutes: 0,
     });
   });
+
+  it("rejects qr before classify", () => {
+    expect(() =>
+      buildAddSubscriptionBody({
+        name: "q",
+        source: "qr",
+        content: "x",
+        autoRefresh: false,
+        refreshIntervalMinutes: 0,
+      }),
+    ).toThrow(/QR/i);
+  });
 });
 
 describe("looksLikeOvpn / ovpnNeedsAuth / looksLikeClash", () => {

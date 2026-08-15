@@ -22,6 +22,7 @@
 - Импорт **OpenVPN** из `.ovpn` (только встроенные сертификаты; sing-box **1.14.0-beta**, pin в `make sync`)
 - Метаданные URL-подписки: квота / срок (`Subscription-Userinfo`), `Profile-Title` / Announce на карточке
 - Импорт **Clash / Mihomo** YAML в поле «Текст» или файлом `.yaml` (автодетект `proxies`; vless / ss / hysteria2)
+- Импорт из **QR**: картинка с диска или из буфера (Ctrl+V), без камеры
 - Тип подписки на карточке (URL / Share / OpenVPN / Clash / текст), даты добавления и обновления
 - Список серверов, TCP‑пинг через основной интерфейс, сортировка (имя / пинг / часто выбираемые)
 - Сохранение выбранного сервера; при одном узле — автовыбор; при refresh — перепривязка или сброс, если узел исчез
@@ -122,6 +123,7 @@ make recover-network
 - [x] Импорт OpenVPN `.ovpn`, фикс правил, TUN perf (`auto_redirect` / MTU / `system` stack)
 - [x] Заголовки подписки (Userinfo / Profile-*), UX карточек (activate, автовыбор одного сервера)
 - [x] Импорт Clash / Mihomo YAML (`source=clash`)
+- [x] QR import (картинка / буфер, без камеры)
 
 Пункты «Дальше» перенесены в `docs/ROADMAP.md` (P1–P3), чтобы не дублировать два списка.
 

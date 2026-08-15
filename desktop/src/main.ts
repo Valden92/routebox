@@ -20,6 +20,13 @@ import {
   ovpnNeedsAuth,
   type SubImportSource,
 } from "./add-subscription";
+import {
+  classifyQrPayload,
+  decodeQrFromBlob,
+  imageBlobFromPaste,
+  previewQrValue,
+  readImageFromClipboard,
+} from "./qr-import";
 import { formatPing } from "./ping-label";
 import { orderNodes, retainPingsForNodes } from "./nodes-sort";
 import {
@@ -372,10 +379,60 @@ function setAddSource(source: SubImportSource) {
     hint.textContent = "Локальный файл. Чтобы обновлять по сети — добавьте URL.";
   } else if (source === "text") {
     hint.textContent = "Можно вставить URI-список, base64 или Clash YAML — формат определится сам.";
+  } else if (source === "qr") {
+    hint.textContent =
+      "Картинка с QR (файл или Ctrl+V). Камера не используется — только изображение с диска или из буфера.";
   } else {
     hint.textContent = "Локальный импорт. Чтобы обновлять по сети — добавьте URL.";
   }
   void syncOvpnAuthFields();
+}
+
+function setQrStatus(msg: string, isError = false) {
+  const st = el("#add-qr-status");
+  st.textContent = msg;
+  st.classList.toggle("err", isError);
+  st.classList.toggle("muted", !isError);
+}
+
+async function applyDecodedQr(raw: string) {
+  const classified = classifyQrPayload(raw);
+  if (!classified) {
+    setQrStatus("QR пустой", true);
+    showToast("В QR нет текста", true);
+    return;
+  }
+  const { target, value } = classified;
+  el<HTMLInputElement>("#add-qr-file").value = "";
+  el("#add-qr-file-name").textContent = "распознано — проверьте поля и нажмите «Добавить»";
+  setAddSource(target);
+  if (target === "url") {
+    el<HTMLInputElement>("#add-sub-url").value = value;
+  } else if (target === "uri") {
+    el<HTMLInputElement>("#add-sub-uri").value = value;
+  } else {
+    el<HTMLTextAreaElement>("#add-sub-content").value = value;
+  }
+  setQrStatus(`Распознано → ${target}: ${previewQrValue(value)}`);
+  showToast(`QR распознан (${target})`);
+  void syncOvpnAuthFields();
+}
+
+async function importQrFromBlob(blob: Blob, label: string) {
+  setQrStatus(`Читаю ${label}…`);
+  try {
+    const raw = await decodeQrFromBlob(blob);
+    if (!raw) {
+      setQrStatus("QR на картинке не найден", true);
+      showToast("QR на картинке не найден", true);
+      return;
+    }
+    await applyDecodedQr(raw);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Ошибка чтения картинки";
+    setQrStatus(msg, true);
+    showToast(msg, true);
+  }
 }
 
 async function syncOvpnAuthFields() {
@@ -1156,12 +1213,43 @@ window.addEventListener("DOMContentLoaded", () => {
     void syncOvpnAuthFields();
   });
 
+  const qrFileInput = el<HTMLInputElement>("#add-qr-file");
+  const qrFileName = el("#add-qr-file-name");
+  el("#add-qr-file-btn").addEventListener("click", () => qrFileInput.click());
+  qrFileInput.addEventListener("change", () => {
+    const file = qrFileInput.files?.[0];
+    qrFileName.textContent = file?.name || "картинка не выбрана";
+    if (file) void importQrFromBlob(file, file.name);
+  });
+  el("#add-qr-paste-btn").addEventListener("click", async () => {
+    const blob = await readImageFromClipboard();
+    if (!blob) {
+      setQrStatus("В буфере нет картинки — сделайте скриншот или скопируйте изображение", true);
+      showToast("В буфере нет картинки. Можно Ctrl+V на вкладке QR.", true);
+      return;
+    }
+    qrFileName.textContent = "из буфера обмена";
+    await importQrFromBlob(blob, "буфер");
+  });
+  el("#form-add-sub").addEventListener("paste", (ev) => {
+    if (currentAddSource() !== "qr") return;
+    const blob = imageBlobFromPaste(ev.clipboardData);
+    if (!blob) return;
+    ev.preventDefault();
+    qrFileName.textContent = "из буфера (Ctrl+V)";
+    void importQrFromBlob(blob, "буфер");
+  });
+
   el("#form-add-sub").addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = e.target as HTMLFormElement;
     const fd = new FormData(form);
     const btn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
     const source = currentAddSource();
+    if (source === "qr") {
+      showToast("Сначала выберите или вставьте картинку с QR", true);
+      return;
+    }
     const auto = fd.get("autoRefresh") === "on";
     const mins = parseInt(String(fd.get("refreshMinutes") || "60"), 10) || 60;
     let content = "";
@@ -1198,6 +1286,9 @@ window.addEventListener("DOMContentLoaded", () => {
       });
       form.reset();
       resetFilePicker();
+      qrFileInput.value = "";
+      qrFileName.textContent = "картинка не выбрана";
+      setQrStatus("");
       el("#add-ovpn-auth").classList.add("hidden");
       el<HTMLInputElement>("#add-auto-refresh").checked = true;
       el<HTMLInputElement>("#add-refresh-minutes").value = "60";
