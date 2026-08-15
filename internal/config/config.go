@@ -43,7 +43,7 @@ type Subscription struct {
 	ID                     string         `json:"id"`
 	Name                   string         `json:"name"`
 	URL                    string         `json:"url"`
-	Source                 string         `json:"source,omitempty"`       // url|text|uri|ovpn
+	Source                 string         `json:"source,omitempty"`       // url|text|uri|ovpn|clash
 	RefreshIntervalMinutes int            `json:"refreshIntervalMinutes"` // при autoRefresh; 0 = только вручную
 	AutoRefresh            bool           `json:"autoRefresh"`
 	CreatedAt              time.Time      `json:"createdAt,omitempty"`

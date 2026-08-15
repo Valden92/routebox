@@ -184,6 +184,7 @@ describe("formatSubscriptionType", () => {
   it("maps known sources", () => {
     expect(formatSubscriptionType("url")).toBe("URL-подписка");
     expect(formatSubscriptionType("ovpn")).toBe("OpenVPN (.ovpn)");
+    expect(formatSubscriptionType("clash")).toBe("Clash / Mihomo");
     expect(formatSubscriptionType("uri")).toBe("Share-ссылка");
     expect(formatSubscriptionType("text")).toBe("Текст / список узлов");
     expect(formatSubscriptionType("")).toBe("Неизвестно");

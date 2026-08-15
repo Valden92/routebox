@@ -135,6 +135,8 @@ export function formatSubscriptionType(source?: string): string {
       return "Share-ссылка";
     case "ovpn":
       return "OpenVPN (.ovpn)";
+    case "clash":
+      return "Clash / Mihomo";
     case "text":
       return "Текст / список узлов";
     case "file":

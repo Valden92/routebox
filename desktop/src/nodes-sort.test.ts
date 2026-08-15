@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Node, PingResult } from "./api";
-import { orderNodes, sortNodes } from "./nodes-sort";
+import { orderNodes, retainPingsForNodes, sortNodes } from "./nodes-sort";
 
 const nodes: Node[] = [
   { id: "b", name: "Bravo", protocol: "vless", host: "b.example", port: 443 },
@@ -37,5 +37,23 @@ describe("orderNodes", () => {
   it("keeps selected first", () => {
     const ordered = orderNodes(nodes, "c", "name-asc", new Map(), {});
     expect(ordered.map((n) => n.id)).toEqual(["c", "a", "b"]);
+  });
+});
+
+describe("retainPingsForNodes", () => {
+  it("keeps pings for current nodes only", () => {
+    const pings: PingResult[] = [
+      { nodeId: "a", host: "a", port: 443, latencyMs: 10, ok: true },
+      { nodeId: "gone", host: "x", port: 1, latencyMs: 0, ok: false },
+    ];
+    expect(retainPingsForNodes(nodes, pings)?.map((p) => p.nodeId)).toEqual(["a"]);
+  });
+
+  it("returns null when nothing matches or cache empty", () => {
+    expect(retainPingsForNodes(nodes, null)).toBeNull();
+    expect(retainPingsForNodes(nodes, [])).toBeNull();
+    expect(
+      retainPingsForNodes(nodes, [{ nodeId: "gone", host: "x", port: 1, latencyMs: 0, ok: false }]),
+    ).toBeNull();
   });
 });

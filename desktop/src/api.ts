@@ -106,6 +106,7 @@ export interface Subscription {
   profileUpdateIntervalHours?: number;
   importSummary?: string;
   nodeCount?: number;
+  skipped?: number;
 }
 
 export interface Node {

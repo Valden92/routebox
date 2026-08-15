@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildAddSubscriptionBody,
   isRemoteSubscriptionUrl,
+  looksLikeClash,
   looksLikeOvpn,
   ovpnNeedsAuth,
 } from "./add-subscription";
@@ -67,20 +68,47 @@ describe("buildAddSubscriptionBody", () => {
     });
   });
 
-  it("builds uri payload", () => {
+  it("maps .yaml file to clash source", () => {
+    const content = "proxies:\n  - name: x\n    type: ss\n    server: a\n    port: 1";
     expect(
       buildAddSubscriptionBody({
-        name: "n",
-        source: "uri",
-        content: "vless://a@b:1",
+        name: "c",
+        source: "file",
+        fileName: "sub.yaml",
+        content: content + "\n",
+        autoRefresh: true,
+        refreshIntervalMinutes: 60,
+      }),
+    ).toEqual({
+      name: "c",
+      source: "clash",
+      content,
+      autoRefresh: false,
+      refreshIntervalMinutes: 0,
+    });
+  });
+
+  it("upgrades text clash yaml to clash source", () => {
+    const content = "proxies:\n  - name: x\n    type: ss\n    server: a\n    port: 1";
+    expect(
+      buildAddSubscriptionBody({
+        name: "c",
+        source: "text",
+        content: content + "\n",
         autoRefresh: false,
         refreshIntervalMinutes: 0,
       }),
-    ).toMatchObject({ source: "uri", content: "vless://a@b:1", autoRefresh: false });
+    ).toEqual({
+      name: "c",
+      source: "clash",
+      content,
+      autoRefresh: false,
+      refreshIntervalMinutes: 0,
+    });
   });
 });
 
-describe("looksLikeOvpn / ovpnNeedsAuth", () => {
+describe("looksLikeOvpn / ovpnNeedsAuth / looksLikeClash", () => {
   it("detects by extension and content", () => {
     expect(looksLikeOvpn("", "x.ovpn")).toBe(true);
     expect(looksLikeOvpn("client\nproto udp\nremote h 1\n", "x.conf")).toBe(true);
@@ -90,6 +118,11 @@ describe("looksLikeOvpn / ovpnNeedsAuth", () => {
   it("detects auth-user-pass", () => {
     expect(ovpnNeedsAuth("auth-user-pass\n")).toBe(true);
     expect(ovpnNeedsAuth("client\n")).toBe(false);
+  });
+
+  it("detects clash yaml", () => {
+    expect(looksLikeClash("proxies:\n- type: ss\n  server: a\n", "x.yaml")).toBe(true);
+    expect(looksLikeClash("vless://a", "x.txt")).toBe(false);
   });
 });
 

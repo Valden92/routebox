@@ -7,7 +7,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -92,6 +96,65 @@ func PublicIP(ctx context.Context, bindIface string) (v4, v6 string, err error) 
 	return "", "", fmt.Errorf("не удалось прочитать IP из ответа проверки")
 }
 
+// Цель для «пинга интернета» (не полный HTTPS — иначе TLS/HTTP завышают задержку).
+const internetLatencyHost = "1.1.1.1"
+
+var pingTimeRe = regexp.MustCompile(`(?i)time[=<]([\d.]+)\s*ms`)
+
+// ParsePingTimeMs извлекает RTT из вывода `ping` (для тестов и icmpLatency).
+func ParsePingTimeMs(out []byte) (float64, bool) {
+	m := pingTimeRe.FindSubmatch(out)
+	if len(m) != 2 {
+		return 0, false
+	}
+	ms, err := strconv.ParseFloat(string(m[1]), 64)
+	if err != nil {
+		return 0, false
+	}
+	return ms, true
+}
+
+func durationMs(d time.Duration) float64 {
+	return float64(d) / float64(time.Millisecond)
+}
+
+// measureLinkLatency — ICMP до 1.1.1.1; если ICMP недоступен — TCP connect :443.
+func measureLinkLatency(ctx context.Context, iface string) (float64, bool) {
+	if ms, ok := icmpLatency(ctx, iface, internetLatencyHost); ok {
+		return ms, true
+	}
+	return tcpConnectLatency(ctx, iface, net.JoinHostPort(internetLatencyHost, "443"))
+}
+
+func icmpLatency(ctx context.Context, iface, host string) (float64, bool) {
+	args := []string{"-c", "1", "-W", "2"}
+	if iface != "" {
+		args = append(args, "-I", iface)
+	}
+	args = append(args, host)
+	cmd := exec.CommandContext(ctx, "ping", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, false
+	}
+	return ParsePingTimeMs(out)
+}
+
+func tcpConnectLatency(ctx context.Context, iface, addr string) (float64, bool) {
+	d := &net.Dialer{Timeout: 2 * time.Second}
+	if iface != "" {
+		d.Control = bindControl(iface)
+	}
+	start := time.Now()
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	ms := durationMs(time.Since(start))
+	if err != nil {
+		return 0, false
+	}
+	_ = conn.Close()
+	return ms, true
+}
+
 func CheckInternet(ctx context.Context, iface string) InternetStatus {
 	st := InternetStatus{
 		Interface: iface,
@@ -109,15 +172,36 @@ func CheckInternet(ctx context.Context, iface string) InternetStatus {
 		return st
 	}
 	st.DNS, _ = ResolveDNS()
-	start := time.Now()
-	v4, _, err := PublicIP(ctx, iface)
-	st.LatencyMs = float64(time.Since(start).Milliseconds())
-	if err != nil {
+
+	// Пинг и публичный IP параллельно: latency раньше брали из полного HTTPS
+	// (TCP+TLS+HTTP к Cloudflare) — всегда выглядело «медленно».
+	var (
+		latMs  float64
+		latOK  bool
+		v4     string
+		pubErr error
+		wg     sync.WaitGroup
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		latMs, latOK = measureLinkLatency(ctx, iface)
+	}()
+	go func() {
+		defer wg.Done()
+		v4, _, pubErr = PublicIP(ctx, iface)
+	}()
+	wg.Wait()
+
+	if latOK {
+		st.LatencyMs = latMs
+	}
+	if pubErr != nil {
 		st.Up = link.State == "up"
 		if st.Up {
-			st.Error = "Wi‑Fi поднят, внешняя проверка недоступна (часто из‑за VPN): " + err.Error()
+			st.Error = "Wi‑Fi поднят, внешняя проверка недоступна (часто из‑за VPN): " + pubErr.Error()
 		} else {
-			st.Error = err.Error()
+			st.Error = pubErr.Error()
 		}
 		return st
 	}

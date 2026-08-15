@@ -12,6 +12,33 @@ export function systemVpnConnectingHint(nmState?: string): string {
   return nmState && /need|auth/i.test(nmState) ? "Ожидание MFA" : "Подключение…";
 }
 
+export type PersonalVpnBusy = "connect" | "disconnect" | null;
+
+/** Текст прогресса на карточке личного VPN во время connect/disconnect. */
+export function personalVpnBusyMessage(busy: PersonalVpnBusy): string | null {
+  if (busy === "connect") {
+    return "Идёт включение: проверка сервера и запуск маршрутизатора…";
+  }
+  if (busy === "disconnect") {
+    return "Идёт выключение личного VPN…";
+  }
+  return null;
+}
+
+/** Подписи кнопок на время операции (null = вернуть обычные). */
+export function personalVpnBusyButtonLabels(busy: PersonalVpnBusy): {
+  on: string;
+  off: string;
+} {
+  if (busy === "connect") {
+    return { on: "Включение…", off: "Выключить" };
+  }
+  if (busy === "disconnect") {
+    return { on: "Включить", off: "Выключение…" };
+  }
+  return { on: "Включить", off: "Выключить" };
+}
+
 export type PersonalConnectGate = "ready" | "host_not_ready" | "setup";
 
 /** Решение по readiness перед POST /personal-vpn/connect. */

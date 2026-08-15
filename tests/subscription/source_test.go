@@ -33,4 +33,7 @@ func TestNormalizeSource(t *testing.T) {
 	if subscription.NormalizeSource("ovpn") != "ovpn" {
 		t.Fatal("ovpn")
 	}
+	if subscription.NormalizeSource("clash") != "clash" {
+		t.Fatal("clash")
+	}
 }

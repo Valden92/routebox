@@ -1,5 +1,16 @@
 import type { Node, NodeSortMode, PingResult } from "./api";
 
+/** Оставить результаты пинга только для узлов, которые ещё есть в списке. */
+export function retainPingsForNodes(
+  nodes: Node[],
+  cached: PingResult[] | null | undefined,
+): PingResult[] | null {
+  if (!cached?.length) return null;
+  const ids = new Set(nodes.map((n) => n.id));
+  const kept = cached.filter((p) => ids.has(p.nodeId));
+  return kept.length > 0 ? kept : null;
+}
+
 export function compareNodesByPing(a: Node, b: Node, pingMap: Map<string, PingResult>): number {
   const pa = pingMap.get(a.id);
   const pb = pingMap.get(b.id);

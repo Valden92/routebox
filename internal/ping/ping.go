@@ -23,9 +23,21 @@ type Result struct {
 	LatencyMs float64 `json:"latencyMs"`
 	OK        bool    `json:"ok"`
 	Error     string  `json:"error,omitempty"`
+	Mode      string  `json:"mode,omitempty"` // tcp|icmp
 }
 
-func TCPBatch(ctx context.Context, iface string, nodes []subscription.Node, concurrency int) []Result {
+// BatchOptions — доп. режим пробы.
+type BatchOptions struct {
+	// PreferICMP: при активном sing-box auto_redirect TCP dial принимает
+	// локальный redirect за ~0 ms — это не RTT до сервера. ICMP до host честнее.
+	PreferICMP bool
+}
+
+func TCPBatch(ctx context.Context, iface string, nodes []subscription.Node, concurrency int, opts ...BatchOptions) []Result {
+	var o BatchOptions
+	if len(opts) > 0 {
+		o = opts[0]
+	}
 	if concurrency <= 0 {
 		concurrency = 20
 	}
@@ -38,7 +50,7 @@ func TCPBatch(ctx context.Context, iface string, nodes []subscription.Node, conc
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i] = probeOne(ctx, iface, n)
+			results[i] = probeOne(ctx, iface, n, o.PreferICMP)
 		}(i, n)
 	}
 	wg.Wait()
@@ -51,7 +63,7 @@ func TCPBatch(ctx context.Context, iface string, nodes []subscription.Node, conc
 	return results
 }
 
-// ProbeMode — как проверять доступность узла.
+// ProbeMode — как проверять доступность узла (без учёта PreferICMP).
 func ProbeMode(n subscription.Node) string {
 	if strings.EqualFold(n.Protocol, "openvpn") {
 		netw := strings.ToLower(strings.TrimSpace(n.Network))
@@ -65,13 +77,11 @@ func ProbeMode(n subscription.Node) string {
 	return "tcp"
 }
 
-func probeOne(ctx context.Context, iface string, n subscription.Node) Result {
-	switch ProbeMode(n) {
-	case "icmp":
+func probeOne(ctx context.Context, iface string, n subscription.Node, preferICMP bool) Result {
+	if preferICMP || ProbeMode(n) == "icmp" {
 		return icmpPingFn(ctx, iface, n)
-	default:
-		return tcpDialFn(ctx, iface, n)
 	}
+	return tcpDialFn(ctx, iface, n)
 }
 
 // Хуки для тестов (подмена dial/ping без сети).
@@ -80,8 +90,12 @@ var (
 	icmpPingFn = icmpOne
 )
 
+func latencyMs(d time.Duration) float64 {
+	return float64(d) / float64(time.Millisecond)
+}
+
 func tcpOne(ctx context.Context, iface string, n subscription.Node) Result {
-	r := Result{NodeID: n.ID, Host: n.Host, Port: n.Port}
+	r := Result{NodeID: n.ID, Host: n.Host, Port: n.Port, Mode: "tcp"}
 	addr := fmt.Sprintf("%s:%d", n.Host, n.Port)
 	d := &net.Dialer{Timeout: 4 * time.Second}
 	if iface != "" {
@@ -89,7 +103,7 @@ func tcpOne(ctx context.Context, iface string, n subscription.Node) Result {
 	}
 	start := time.Now()
 	conn, err := d.DialContext(ctx, "tcp", addr)
-	r.LatencyMs = float64(time.Since(start).Milliseconds())
+	r.LatencyMs = latencyMs(time.Since(start))
 	if err != nil {
 		r.Error = err.Error()
 		return r
@@ -102,7 +116,7 @@ func tcpOne(ctx context.Context, iface string, n subscription.Node) Result {
 var pingTimeRe = regexp.MustCompile(`(?i)time[=<]([\d.]+)\s*ms`)
 
 func icmpOne(ctx context.Context, iface string, n subscription.Node) Result {
-	r := Result{NodeID: n.ID, Host: n.Host, Port: n.Port}
+	r := Result{NodeID: n.ID, Host: n.Host, Port: n.Port, Mode: "icmp"}
 	if n.Host == "" {
 		r.Error = "empty host"
 		return r
@@ -115,7 +129,7 @@ func icmpOne(ctx context.Context, iface string, n subscription.Node) Result {
 	cmd := exec.CommandContext(ctx, "ping", args...)
 	start := time.Now()
 	out, err := cmd.CombinedOutput()
-	elapsed := float64(time.Since(start).Milliseconds())
+	elapsed := latencyMs(time.Since(start))
 	if err != nil {
 		r.LatencyMs = elapsed
 		msg := strings.TrimSpace(string(out))

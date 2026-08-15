@@ -12,13 +12,14 @@ import (
 // ProbeProxyReachable проверяет, что до VPN-сервера можно достучаться с хоста (до полного туннеля).
 // Свой таймаут, не контекст HTTP-запроса — иначе «operation was canceled» при отмене r.Context().
 // OpenVPN/UDP — ICMP до host (порт не слушает TCP); остальные протоколы — TCP к host:port.
-func ProbeProxyReachable(node subscription.Node, mainIface string) error {
+// preferICMP: при активном auto_redirect TCP dial даёт ложный ~0 ms — лучше ICMP.
+func ProbeProxyReachable(node subscription.Node, mainIface string, preferICMP bool) error {
 	if node.Host == "" || node.Port == 0 {
 		return fmt.Errorf("некорректный узел подписки")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	res := ping.TCPBatch(ctx, mainIface, []subscription.Node{node}, 1)
+	res := ping.TCPBatch(ctx, mainIface, []subscription.Node{node}, 1, ping.BatchOptions{PreferICMP: preferICMP})
 	if len(res) == 0 {
 		return fmt.Errorf("VPN-сервер %s:%d недоступен", node.Host, node.Port)
 	}

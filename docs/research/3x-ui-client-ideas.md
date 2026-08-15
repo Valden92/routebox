@@ -20,7 +20,8 @@
 - импорт URL + текст + share-URI + файл (`source=url|text|uri`);
 - `RemapSelection` при refresh (аналог их stable tags для outbound-subs) + автовыбор единственного узла;
 - ping узлов, probe сайта по путям, coexist / recover;
-- заголовки подписки `Subscription-Userinfo` / `Profile-*` (квота и срок в UI).
+- заголовки подписки `Subscription-Userinfo` / `Profile-*` (квота и срок в UI);
+- Clash / Mihomo YAML (`source=clash` + автодетект в `ParseBody`).
 
 ## 2. Приоритеты (roadmap)
 
@@ -30,7 +31,7 @@
 
 | Pri | Идея | Ценность | Оценка сложности |
 |-----|------|----------|------------------|
-| **P1** | Clash / Mihomo YAML import | Много провайдеров только так | M |
+| **P1** | ~~Clash / Mihomo YAML import~~ | Много провайдеров только так | M · **сделано 2026-08-15** |
 | **P1** | QR import (ссылка / текст / URL) | С телефона на десктоп | S–M |
 | **P1** | ~~Заголовки подписки (`Subscription-Userinfo` и др.)~~ | Трафик/срок без панели провайдера | S · **сделано 2026-08-13** |
 | **P2** | Route explain («куда уйдёт host») | Отладка правил рядом с probe | S–M |
@@ -47,26 +48,24 @@
 
 ## 3. Как реализовывать у нас (по фичам)
 
-### 3.1 Clash YAML import — P1
+### 3.1 Clash YAML import — P1 · **сделано 2026-08-15**
 
 **Смысл:** вкладка/режим «Clash» рядом с URL/текст/файл; тело YAML → список узлов.
 
-**Куда:**
+**Куда (реализовано):**
 
-- `internal/subscription/clash.go` — парсер proxies → `[]Node` (black-box тесты в `tests/subscription/`);
-- расширить `addSubscription` / `ParseBody` (или отдельный `source=clash`);
-- UI: `desktop/src/add-subscription.ts` + панель в `index.html` / `main.ts`.
+- `internal/subscription/clash.go` — `ParseClash` / `LooksLikeClash`;
+- `source=clash` в `addSubscription`; автодетект в `ParseBody` и при `source=text`/`file`;
+- UI: поле **Текст** (и файл `.yaml`) — без отдельной вкладки Clash.
 
 **Подход:**
 
-1. Парсить только `proxies:` (Mihomo/Clash Meta): `type: vless|vmess|trojan|ss|hysteria2|…`.
-2. Для каждого прокси строить **канонический `rawUri`** (share-link), чтобы дальше жить на уже существующем `URIToOutbound` / sing-box пути — без второй ветки генерации конфига.
-3. Неподдерживаемые типы пропускать с счётчиком `skipped` в ответе API (toast: «N узлов, M пропущено»).
-4. Proxy-groups / rules из Clash **игнорировать** на первом круге (у нас своя модель direct/work/personal).
+1. Парсить только `proxies:` (Mihomo/Clash Meta): `type: vless|ss|hysteria2`.
+2. Для каждого прокси — канонический `rawUri` → существующий sing-box путь.
+3. Неподдерживаемые типы → `skipped` в ответе API.
+4. Proxy-groups / rules игнорируются.
 
-**Тесты:** фикстуры YAML (vless+reality, ss, hy2) в `tests/subscription/testdata/`.
-
-**API:** additive (`source: "clash"`); при желании bump `apiVersion` только если ломаем старый клиент (не обязательно).
+**Тесты:** `tests/subscription/clash_test.go`, `testdata/clash-sample.yaml`, API `TestAddSubscriptionClash`.
 
 ---
 
@@ -158,7 +157,7 @@
 ## 4. Порядок внедрения (рекомендуемый)
 
 1. ~~**Userinfo headers**~~ — сделано.  
-2. **Clash import** — закрывает дыру форматов.  
+2. ~~**Clash import**~~ — сделано.  
 3. **QR** — UX поверх уже расширенного импорта.  
 4. **SSRF-guard** — вместе с любым следующим касанием `Fetch`.  
 5. **Route explain** — усиливает правила/probe.  
@@ -186,3 +185,4 @@
 | 2026-08-05 | Первый разбор + недооценённые паттерны; этот документ и канвас |
 | 2026-08-13 | Приоритеты сведены в `docs/ROADMAP.md` (вместе с пунктами README) |
 | 2026-08-13 | P1 Userinfo / Profile-* — сделано |
+| 2026-08-15 | P1 Clash / Mihomo YAML import — сделано |

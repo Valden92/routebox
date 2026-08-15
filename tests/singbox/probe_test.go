@@ -9,11 +9,11 @@ import (
 )
 
 func TestProbeProxyReachableRejectsEmpty(t *testing.T) {
-	err := singbox.ProbeProxyReachable(subscription.Node{}, "")
+	err := singbox.ProbeProxyReachable(subscription.Node{}, "", false)
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	err = singbox.ProbeProxyReachable(subscription.Node{Host: "x"}, "")
+	err = singbox.ProbeProxyReachable(subscription.Node{Host: "x"}, "", false)
 	if err == nil {
 		t.Fatal("expected error for port 0")
 	}
@@ -27,7 +27,7 @@ func TestProbeProxyReachableOpenVPNUDPNotTCP(t *testing.T) {
 		Network:  "udp",
 		Host:     "127.0.0.1",
 		Port:     1194,
-	}, "")
+	}, "", false)
 	if err != nil {
 		if strings.Contains(err.Error(), "недоступен") {
 			t.Skip(err.Error())
@@ -41,7 +41,7 @@ func TestProbeProxyReachableVLESSClosedPortFails(t *testing.T) {
 		Protocol: "vless",
 		Host:     "127.0.0.1",
 		Port:     1,
-	}, "")
+	}, "", false)
 	if err == nil {
 		t.Fatal("expected TCP failure on closed port")
 	}

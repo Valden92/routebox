@@ -1,5 +1,5 @@
 /** Способы добавления подписки в UI / API. */
-export type SubImportSource = "url" | "text" | "uri" | "file" | "ovpn";
+export type SubImportSource = "url" | "text" | "uri" | "file" | "ovpn" | "clash";
 
 export type AddSubscriptionInput = {
   name: string;
@@ -26,12 +26,32 @@ export function looksLikeOvpn(content: string, fileName?: string): boolean {
   return low.includes("client") && low.includes("remote ") && low.includes("proto ");
 }
 
-/** Тело POST /api/subscriptions (file → text|ovpn на сервере). */
+/** Clash / Mihomo YAML с секцией proxies. */
+export function looksLikeClash(content: string, fileName?: string): boolean {
+  const name = (fileName ?? "").toLowerCase();
+  if (name.endsWith(".yaml") || name.endsWith(".yml")) {
+    if (content.toLowerCase().includes("proxies:")) return true;
+  }
+  const text = content.trim();
+  if (!text) return false;
+  const low = text.toLowerCase().slice(0, 4096);
+  return low.includes("proxies:") && low.includes("type:") && low.includes("server:");
+}
+
+/** Тело POST /api/subscriptions (file → text|ovpn|clash на сервере). */
 export function buildAddSubscriptionBody(input: AddSubscriptionInput): Record<string, unknown> {
   const name = input.name.trim();
   let source: string = input.source;
   if (source === "file") {
-    source = looksLikeOvpn(input.content ?? "", input.fileName) ? "ovpn" : "text";
+    if (looksLikeOvpn(input.content ?? "", input.fileName)) {
+      source = "ovpn";
+    } else if (looksLikeClash(input.content ?? "", input.fileName)) {
+      source = "clash";
+    } else {
+      source = "text";
+    }
+  } else if (source === "text" && looksLikeClash(input.content ?? "")) {
+    source = "clash";
   }
   const base: Record<string, unknown> = {
     name,
