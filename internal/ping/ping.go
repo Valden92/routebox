@@ -63,6 +63,61 @@ func TCPBatch(ctx context.Context, iface string, nodes []subscription.Node, conc
 	return results
 }
 
+// OrderByResults — узлы в порядке результатов пробы: доступные раньше,
+// среди доступных — от меньшего пинга к большему; без результата — в конец.
+func OrderByResults(nodes []subscription.Node, results []Result) []subscription.Node {
+	byID := make(map[string]Result, len(results))
+	for _, r := range results {
+		byID[r.NodeID] = r
+	}
+	ordered := make([]subscription.Node, len(nodes))
+	copy(ordered, nodes)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		ri, oki := byID[ordered[i].ID]
+		rj, okj := byID[ordered[j].ID]
+		if oki != okj {
+			return oki
+		}
+		if ri.OK != rj.OK {
+			return ri.OK
+		}
+		return ri.LatencyMs < rj.LatencyMs
+	})
+	return ordered
+}
+
+// OrderByWeightThenPing — сначала больший вес автовыбора, затем как OrderByResults (ok + latency).
+func OrderByWeightThenPing(nodes []subscription.Node, results []Result, weights map[string]int) []subscription.Node {
+	byID := make(map[string]Result, len(results))
+	for _, r := range results {
+		byID[r.NodeID] = r
+	}
+	weightOf := func(id string) int {
+		if weights == nil {
+			return 0
+		}
+		return weights[id]
+	}
+	ordered := make([]subscription.Node, len(nodes))
+	copy(ordered, nodes)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		wi, wj := weightOf(ordered[i].ID), weightOf(ordered[j].ID)
+		if wi != wj {
+			return wi > wj
+		}
+		ri, oki := byID[ordered[i].ID]
+		rj, okj := byID[ordered[j].ID]
+		if oki != okj {
+			return oki
+		}
+		if ri.OK != rj.OK {
+			return ri.OK
+		}
+		return ri.LatencyMs < rj.LatencyMs
+	})
+	return ordered
+}
+
 // ProbeMode — как проверять доступность узла (без учёта PreferICMP).
 func ProbeMode(n subscription.Node) string {
 	if strings.EqualFold(n.Protocol, "openvpn") {

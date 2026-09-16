@@ -32,10 +32,16 @@ type Manager struct {
 	binPath   string
 	logPath   string
 	waitDone  chan struct{}
+	// probeMode — пробный инстанс без TUN (автовыбор узла): не требует setcap
+	// и не делает recover маршрутов (иначе снесёт основной туннель).
+	probeMode bool
 }
 
 const ClashAPIAddr = "127.0.0.1:47893"
 const PersonalProbeProxyURL = "http://127.0.0.1:47894"
+
+// personalProbePort — mixed-inbound для probe-запросов (UI probe и автовыбор).
+const personalProbePort = 47894
 
 // TUN perf: system stack + ниже MTU под OpenVPN overhead; auto_redirect на Linux.
 const (
@@ -46,6 +52,11 @@ const (
 func NewManager(binPath, cfgPath string) *Manager {
 	logPath := filepath.Join(filepath.Dir(cfgPath), "sing-box.log")
 	return &Manager{binPath: binPath, cfgPath: cfgPath, logPath: logPath}
+}
+
+// SetProbeMode помечает инстанс как пробный (автовыбор узла): без TUN и recover.
+func (m *Manager) SetProbeMode() {
+	m.probeMode = true
 }
 
 func (m *Manager) Running() bool {
@@ -90,15 +101,17 @@ func (m *Manager) Start(_ context.Context) error {
 	if _, err := os.Stat(bin); err != nil {
 		return fmt.Errorf("sing-box not found: install via scripts/install-sing-box.sh")
 	}
-	if err := RequireTUNCapability(bin); err != nil {
-		return err
-	}
 	if err := validateConfigIfChanged(bin, m.cfgPath); err != nil {
 		m.lastError = err.Error()
 		return err
 	}
-	// Убрать залипшие ip rule/table после аварийного stop (иначе: add rule … file exists).
-	CleanupStaleTUNRules()
+	if !m.probeMode {
+		if err := RequireTUNCapability(bin); err != nil {
+			return err
+		}
+		// Убрать залипшие ip rule/table после аварийного stop (иначе: add rule … file exists).
+		CleanupStaleTUNRules()
+	}
 	// Не привязываем к HTTP-запросу: иначе процесс умирает после ответа API
 	m.cmd = exec.Command(bin, "run", "-c", m.cfgPath)
 	logFile, err := os.OpenFile(m.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -119,7 +132,9 @@ func (m *Manager) Start(_ context.Context) error {
 	if !m.aliveLocked() {
 		hint := resolveErrorMessage(m.lastError, tailLogFatal(m.logPath))
 		m.lastError = hint
-		RestoreAfterPersonalVPN()
+		if !m.probeMode {
+			RestoreAfterPersonalVPN()
+		}
 		return fmt.Errorf("sing-box не запустился: %s", hint)
 	}
 	return nil
@@ -184,19 +199,15 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 	var outbound map[string]any
 	var endpoint map[string]any
 	if personalAvailable {
-		switch strings.ToLower(node.Protocol) {
-		case "openvpn":
-			ep, err := openvpnEndpoint("proxy", *node)
-			if err != nil {
-				return err
-			}
-			endpoint = ep
-		default:
-			o, err := uriToOutbound(*node)
-			if err != nil {
-				return err
-			}
-			outbound = o
+		// Фрагментация TLS ClientHello — анти-DPI (аналог tlshello в мобильных клиентах).
+		out, isEndpoint, err := BuildOutbound(*node, "proxy", st.PersonalVPN.FragmentTLS())
+		if err != nil {
+			return err
+		}
+		if isEndpoint {
+			endpoint = out
+		} else {
+			outbound = out
 		}
 	}
 	// DNS schema 1.12+: typed servers (не legacy address).
@@ -240,7 +251,7 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 			"type":        "mixed",
 			"tag":         "personal-probe-in",
 			"listen":      "127.0.0.1",
-			"listen_port": 47894,
+			"listen_port": personalProbePort,
 		})
 	}
 	// Системный VPN: без перехвата tun0.

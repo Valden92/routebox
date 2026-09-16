@@ -40,7 +40,7 @@
 | **P3** | Stats ↑↓ (sing-box API) | Наглядность | M |
 | **P3** | Backup/export настроек | Онбординг / перенос машины | S–M |
 | **P3** | In-app log viewer | Меньше `tail` в терминале | S |
-| **P3** | Авто-failover leastPing | После стабильного ping | M–L |
+| **P3** | ~~Авто-failover leastPing~~ (частично) | Ручной auto-select по сайтам + веса уже есть; полный leastPing-failover — later | M–L · **частично 2026-09-16** |
 | **P3** | Импорт geosite-наборов в правила | Каталоги доменов | M |
 | later | JSON Xray sub, DNS presets UI, dialer chain, WG export | По боли | — |
 
@@ -82,6 +82,23 @@
 3. Источники картинки: выбор файла, кнопка «Вставить из буфера», Ctrl+V на вкладке QR.
 
 **Тесты:** `desktop/src/qr-import.test.ts` (классификатор строки).
+
+---
+
+### 3.2b Автовыбор узла по сайтам — **сделано 2026-09-16**
+
+**Смысл:** при многих серверах в подписке не перебирать вручную — подобрать узел, через который открываются нужные сайты (Cursor и т.п.).
+
+**Куда:** `internal/api/autoselect.go` + `internal/singbox/probeconfig.go`; UI кнопка «Автовыбор» / `desktop/src/autoselect.ts`.
+
+**Поведение:**
+
+1. `POST /api/subscriptions/{id}/auto-select` → `{ jobId, total }`; прогресс `GET …/auto-select/{jobId}` (N/Total, текущий узел).
+2. Порядок: **вес ↓** (`nodeAutoSelectWeights`, успех +1 / провал −1, накапливается), затем пинг.
+3. Пробный sing-box без TUN; TLS fragment как у личного VPN.
+4. Список сайтов задаёт пользователь (дефолт / правила personal / localStorage).
+
+**Не путать с** P3 auto-failover leastPing (фоновый перебор при падении) — это ручной подбор по запросу.
 
 ---
 

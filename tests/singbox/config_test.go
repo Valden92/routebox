@@ -59,9 +59,27 @@ func TestURIToOutboundShadowsocks(t *testing.T) {
 }
 
 func TestURIToOutboundUnsupported(t *testing.T) {
-	_, err := singbox.URIToOutbound(subscription.Node{RawURI: "vmess://x"})
+	_, err := singbox.URIToOutbound(subscription.Node{RawURI: "ssr://x"})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestBuildOutboundTLSFragment(t *testing.T) {
+	node := subscription.Node{
+		RawURI: "vless://11111111-1111-1111-1111-111111111111@vless.example.com:443?encryption=none&security=tls&sni=vless.example.com#N",
+	}
+	o, isEP, err := singbox.BuildOutbound(node, "proxy", true)
+	if err != nil || isEP {
+		t.Fatalf("err=%v isEP=%v", err, isEP)
+	}
+	tls, ok := o["tls"].(map[string]any)
+	if !ok || tls["fragment"] != true {
+		t.Fatalf("want fragment tls %+v", o["tls"])
+	}
+	utls, ok := tls["utls"].(map[string]any)
+	if !ok || utls["enabled"] != true {
+		t.Fatalf("want utls %+v", tls)
 	}
 }
 

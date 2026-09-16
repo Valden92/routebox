@@ -24,11 +24,14 @@ proxies:
     port: 443
     password: "hy2pass"
     sni: hy2.example.com
-  - name: "Unsupported Trojan"
-    type: trojan
+  - name: "Unsupported SSR"
+    type: ssr
     server: 203.0.113.40
     port: 443
     password: "nope"
+    cipher: aes-256-cfb
+    protocol: origin
+    obfs: plain
 
 proxy-groups:
   - name: PROXY

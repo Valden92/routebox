@@ -45,8 +45,8 @@ make reset-host # сбросить хост-настройку; затем сн�
 | sing-box | `internal/singbox/` | Генерация конфига, start/stop, coexist, recover; pin **≥ 1.14.0-beta** (OpenVPN endpoint) |
 | Системный VPN (read-only) | `internal/nm/workvpn.go` | Статус через NM, **без connect/disconnect** |
 | Настройки | `internal/config/config.go` | JSON в `settings.json`, шифрование |
-| Подписки | `internal/subscription/` | VLESS/Hysteria2/SS + **OpenVPN** + Clash; QR в UI (`desktop/src/qr-import.ts`); fetch meta; `RemapSelection` + автовыбор одного узла |
-| UI | `desktop/src/main.ts`, `api.ts`, `index.html` | Карточки статуса, личный VPN |
+| Подписки | `internal/subscription/` | VLESS/Hysteria2/SS/VMess/Trojan + **OpenVPN** + Clash; QR в UI (`desktop/src/qr-import.ts`); fetch meta; `RemapSelection` + автовыбор одного узла; **мульти-узел auto-select** (`internal/api/autoselect.go`, UI `desktop/src/autoselect.ts`) |
+| UI | `desktop/src/main.ts`, `api.ts`, `index.html` | Карточки статуса, личный VPN, автовыбор сервера |
 | Хост | `scripts/configure-host-inner.sh`, `polkit-vpn-router.rules` | setcap, NM drop-in, polkit resolve1 только для `tun100` |
 
 ---
@@ -100,7 +100,7 @@ ip link show tun100
 | POST | `/api/personal-vpn/disconnect` | stop + recover маршрутов |
 | POST | `/api/personal-vpn/reapply` | Перезапись конфига без смены узла |
 | GET | `/api/personal-vpn/status` | Детальный статус |
-| * | `/api/subscriptions/*` | CRUD, refresh, ping, select, **activate**; `source`: url\|text\|uri\|**ovpn**\|**clash**; meta Userinfo/Profile-* |
+| * | `/api/subscriptions/*` | CRUD, refresh, ping, select, **activate**, **auto-select** (`POST …/auto-select` → job; `GET …/auto-select/{jobId}`); `source`: url\|text\|uri\|**ovpn**\|**clash**; meta Userinfo/Profile-*; веса `nodeAutoSelectWeights` |
 | * | `/api/rules/*` | Правила доменов/приложений |
 | GET | `/api/apps` | Скан процессов (Linux) |
 | POST | `/api/probe/site` | Проверка URL по путям |
@@ -170,6 +170,7 @@ make stop              # тоже гасит sing-box
 | Статус системного VPN | `internal/nm/workvpn.go`, `server.go` → `status()` |
 | UI карточки | `desktop/src/main.ts`, `desktop/index.html` |
 | Подписки/узлы | `internal/subscription/`, `internal/api/server.go` |
+| Автовыбор узла по сайтам | `internal/api/autoselect.go`, `internal/singbox/probeconfig.go`, `desktop/src/autoselect.ts` |
 | Пинг без work VPN | `internal/ping/`, `internal/network/bind_linux.go` |
 | Идеи фич / бэклог | `docs/ROADMAP.md` (приоритеты); детали 3x-ui — `docs/research/3x-ui-client-ideas.md` |
 
@@ -261,101 +262,44 @@ npx gitnexus analyze --embeddings  # только если нужны embeddings
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **vpn-router** (1170 symbols, 3192 relationships, 95 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **routebox** (1531 symbols, 5225 relationships, 128 execution flows).
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+> Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
-
-## When Debugging
-
-1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
-2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/vpn-router/process/{processName}` — trace the full execution flow step by step
-4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
-
-## When Refactoring
-
-- **Renaming**: MUST use `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` first. Review the preview — graph edits are safe, text_search edits need manual review. Then run with `dry_run: false`.
-- **Extracting/Splitting**: MUST run `gitnexus_context({name: "target"})` to see all incoming/outgoing refs, then `gitnexus_impact({target: "target", direction: "upstream"})` to find all external callers before moving code.
-- After any refactor: run `gitnexus_detect_changes({scope: "all"})` to verify only expected files changed.
+- **MUST run impact before editing.** Use `impact({target: "symbolName", direction: "upstream"})` or `node .gitnexus/run.cjs impact "symbolName" --direction upstream --repo .`; report callers, processes, and risk. Never substitute grep for graph analysis.
+- **MUST analyze graph changes before committing.** Use `detect_changes({scope: "all"})` (MCP) or `node .gitnexus/run.cjs detect-changes --scope all --repo .` (CLI fallback). `partial: true` or `truncated: true` is not a clean check — a zero means unseen, not unaffected; re-run it. For regression review: `detect_changes({scope: "compare", base_ref: "main"})` or `node .gitnexus/run.cjs detect-changes --scope compare --base-ref "main" --repo .`.
+- MUST warn on HIGH/CRITICAL `risk` pre-edit; never use `riskSharedAxes` to waive a HIGH/CRITICAL `risk` warning. Compare File/symbol: MCP File omits axes; Graph-RAG expands File.
+- **MUST treat `risk: UNKNOWN` as unresolved, not as low.** An empty caller set is not evidence the symbol is unused — it can also mean the callers are not resolvable by the index (plain-object property access, dynamic dispatch, cross-language calls). `impact` pairs `UNKNOWN` with a `riskNote` saying so. Confirm with a text search before treating the symbol as safe to change or delete; do not proceed on the strength of a zero.
+- **MUST use `query({search_query: "concept"})` for concepts/flows, `context({name: "symbolName"})` for a named symbol, or `impact` for blast radius, on read-only callers, dependencies, imports, or execution flow.** Graph first; text search only for empty/`UNKNOWN`/literals.
+- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-
-## Tools Quick Reference
-
-| Tool | When to use | Command |
-|------|-------------|---------|
-| `query` | Find code by concept | `gitnexus_query({query: "auth validation"})` |
-| `context` | 360-degree view of one symbol | `gitnexus_context({name: "validateUser"})` |
-| `impact` | Blast radius before editing | `gitnexus_impact({target: "X", direction: "upstream"})` |
-| `detect_changes` | Pre-commit scope check | `gitnexus_detect_changes({scope: "staged"})` |
-| `rename` | Safe multi-file rename | `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` |
-| `cypher` | Custom graph queries | `gitnexus_cypher({query: "MATCH ..."})` |
-
-## Impact Risk Levels
-
-| Depth | Meaning | Action |
-|-------|---------|--------|
-| d=1 | WILL BREAK — direct callers/importers | MUST update these |
-| d=2 | LIKELY AFFECTED — indirect deps | Should test |
-| d=3 | MAY NEED TESTING — transitive | Test if critical path |
+- NEVER edit a function, class, or method before MCP/CLI impact analysis.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis, and never read `UNKNOWN` as an all-clear — it means the walk could not answer, which is the one verdict that requires confirming by other means.
+- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
+- NEVER commit before MCP/CLI graph change analysis.
 
 ## Resources
 
 | Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/vpn-router/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/vpn-router/clusters` | All functional areas |
-| `gitnexus://repo/vpn-router/processes` | All execution flows |
-| `gitnexus://repo/vpn-router/process/{name}` | Step-by-step execution trace |
-
-## Self-Check Before Finishing
-
-Before completing any code modification task, verify:
-1. `gitnexus_impact` was run for all modified symbols
-2. No HIGH/CRITICAL risk warnings were ignored
-3. `gitnexus_detect_changes()` confirms changes match expected scope
-4. All d=1 (WILL BREAK) dependents were updated
-
-## Keeping the Index Fresh
-
-After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
-
-```bash
-npx gitnexus analyze
-```
-
-If the index previously included embeddings, preserve them by adding `--embeddings`:
-
-```bash
-npx gitnexus analyze --embeddings
-```
-
-To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.embeddings` field shows the count (0 means no embeddings). **Running analyze without `--embeddings` will delete any previously generated embeddings.**
-
-> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
+| --- | --- |
+| `gitnexus://repo/routebox/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/routebox/clusters` | All functional areas |
+| `gitnexus://repo/routebox/processes` | All execution flows |
+| `gitnexus://repo/routebox/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
 | Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| --- | --- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->

@@ -30,12 +30,13 @@ import (
 )
 
 type Server struct {
-	Store         *config.Store
-	SingBox       *singbox.Manager
-	router        chi.Router
-	refresh       *refreshScheduler
-	autoMu        sync.Mutex
-	observedHosts map[string]time.Time
+	Store          *config.Store
+	SingBox        *singbox.Manager
+	router         chi.Router
+	refresh        *refreshScheduler
+	autoMu         sync.Mutex
+	observedHosts  map[string]time.Time
+	autoSelectJobs sync.Map // jobId → *autoSelectJob
 }
 
 func NewServer(store *config.Store, sb *singbox.Manager) *Server {
@@ -117,6 +118,8 @@ func (s *Server) routes() {
 		r.Post("/{id}/ping", s.pingNodes)
 		r.Post("/{id}/select", s.selectNode)
 		r.Post("/{id}/activate", s.activateSubscription)
+		r.Post("/{id}/auto-select", s.autoSelectNode)
+		r.Get("/{id}/auto-select/{jobId}", s.autoSelectNodeStatus)
 		r.Put("/{id}", s.updateSubscription)
 		r.Delete("/{id}", s.deleteSubscription)
 	})
@@ -151,6 +154,8 @@ func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
 			"openvpn-import",
 			"clash-import",
 			"qr-import",
+			"node-auto-select",
+			"tls-fragment",
 		},
 	})
 }

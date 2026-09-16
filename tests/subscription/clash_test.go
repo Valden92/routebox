@@ -31,7 +31,7 @@ func TestParseClashSample(t *testing.T) {
 		t.Fatal(err)
 	}
 	if skipped != 1 {
-		t.Fatalf("skipped trojan want 1, got %d", skipped)
+		t.Fatalf("skipped unsupported want 1, got %d", skipped)
 	}
 	if len(nodes) != 3 {
 		t.Fatalf("nodes %d", len(nodes))

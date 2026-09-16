@@ -31,6 +31,7 @@
 | Автовыбор единственного сервера | Add / refresh / list heal через `RemapSelection` |
 | Clash / Mihomo YAML import | proxies → rawUri; вставка в «Текст»/файл/URL с автодетектом |
 | QR import (картинка / буфер) | Без камеры: файл или Ctrl+V → classify → url/uri/text |
+| Автовыбор узла по сайтам | Job `POST/GET …/auto-select`: вес ↓ + пинг → пробный sing-box → сайты; прогресс N/Total; веса ±1; TLS fragment по умолчанию |
 
 ---
 
@@ -52,7 +53,7 @@
 | **P3** | In-app log viewer (`sing-box.log`) | Меньше `tail` в терминале | **S** | 3x-ui |
 | **P3** | Импорт GeoSite / авто‑категории в правила | Каталоги доменов | **M** | README + 3x-ui |
 | **P3** | Несколько активных подписок | Сейчас одна `activeSubscriptionId` | **M–L** | README |
-| **P3** | Авто-failover leastPing по узлам | После стабильного ping | **M–L** | README + 3x-ui |
+| **P3** | ~~Авто-failover leastPing по узлам~~ (частично) | Ручной auto-select + веса есть; полный auto-failover — later | **M–L** | README + 3x-ui · **частично 2026-09-16** |
 | later | JSON Xray sub, DNS presets UI, dialer chain, WG export | По боли | — | 3x-ui |
 
 Сознательно **не** берём из 3x-ui: inbounds / REALITY scanner, квоты, Fail2ban, multi-node admin, серверный WARP, Telegram-бот админки.
@@ -86,3 +87,5 @@
 | 2026-08-13 | UX подписок: activate API, бейджи Выбрана/Не выбрана, автовыбор одного сервера, тип/даты на карточке |
 | 2026-08-15 | P1 Clash / Mihomo YAML import — сделано |
 | 2026-08-15 | P1 QR import (картинка / буфер, без камеры) — сделано |
+| 2026-09-16 | Автовыбор сервера по сайтам + TLS fragment + расширение Clash/outbound (vmess/trojan) |
+| 2026-09-16 | Автовыбор: все узлы, прогресс N/Total, накопительные веса (успех +1 / провал −1) |

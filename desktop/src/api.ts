@@ -125,6 +125,8 @@ export interface PingResult {
   latencyMs: number;
   ok: boolean;
   error?: string;
+  /** tcp | icmp — при включённом личном VPN демон предпочитает ICMP */
+  mode?: string;
 }
 
 export interface SiteProbe {
@@ -179,3 +181,38 @@ export interface AutoCheckResponse {
   suggestedPath?: RoutePath;
   message?: string;
 }
+
+export interface AutoSelectAttempt {
+  nodeId: string;
+  name: string;
+  latencyMs: number;
+  weight?: number;
+  ok: boolean;
+  error?: string;
+}
+
+export interface AutoSelectStartResponse {
+  jobId: string;
+  subscriptionId: string;
+  total: number;
+  phase: string;
+}
+
+export interface AutoSelectJobStatus {
+  jobId: string;
+  subscriptionId: string;
+  phase: string;
+  checked: number;
+  total: number;
+  currentName?: string;
+  attempts: AutoSelectAttempt[];
+  finished: boolean;
+  selectedNodeId?: string;
+  selectedNodeName?: string;
+  reconnected?: boolean;
+  message?: string;
+  error?: string;
+}
+
+/** @deprecated use AutoSelectJobStatus; оставлен для совместимости тестов UI */
+export type AutoSelectResponse = AutoSelectJobStatus;
