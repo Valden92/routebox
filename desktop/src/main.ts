@@ -2,6 +2,8 @@ import {
   api,
   ApiError,
   type AutoCheckResponse,
+  type AutoSelectJobStatus,
+  type AutoSelectStartResponse,
   type DomainRule,
   type Node,
   type NodeSortMode,
@@ -29,6 +31,13 @@ import {
 } from "./qr-import";
 import { formatPing } from "./ping-label";
 import { orderNodes, retainPingsForNodes } from "./nodes-sort";
+import {
+  initialAutoSelectSitesText,
+  parseSitesInput,
+  renderAutoSelectProgress,
+  renderAutoSelectResult,
+  saveAutoSelectSites,
+} from "./autoselect";
 import {
   filterRules,
   formatRefreshLabel,
@@ -170,6 +179,88 @@ function showProbeLoading(url: string) {
        <span>Проверяем direct, системный и личный VPN…</span>
      </div>`,
   );
+}
+
+/** Модалка автовыбора: список сайтов → перебор серверов демоном по весу и пингу. */
+function openAutoSelectModal(subId: string, subName: string) {
+  const sitesSeed = initialAutoSelectSitesText(cachedRulesData?.rules ?? []);
+  openModal(
+    "Автовыбор сервера",
+    `<p class="muted" style="margin:0 0 0.75rem">Подписка «${escapeHtml(subName)}»: сначала серверы с лучшим весом (успех +1 / провал −1), затем по пингу. Можно указать Cursor и др.</p>
+     <form id="form-autoselect" class="sub-form">
+       <label class="interval-label" style="display:block;margin-bottom:0.75rem">
+         Сайты для проверки (по одному в строке, до 5)
+         <textarea id="autoselect-sites" rows="4">${escapeHtml(sitesSeed)}</textarea>
+       </label>
+       <button type="submit" id="btn-autoselect-run">Начать подбор</button>
+     </form>
+     <div id="autoselect-result"></div>`,
+  );
+  el("#form-autoselect").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = el<HTMLButtonElement>("#btn-autoselect-run");
+    const sitesText = el<HTMLTextAreaElement>("#autoselect-sites").value;
+    const sites = parseSitesInput(sitesText);
+    if (!sites.length) {
+      showToast("Укажите хотя бы один сайт", true);
+      return;
+    }
+    saveAutoSelectSites(sitesText);
+    btn.disabled = true;
+    const resultBox = el("#autoselect-result");
+    resultBox.innerHTML = `
+      <div class="probe-loading">
+        <div class="spinner" aria-hidden="true"></div>
+        <span>Запуск подбора…</span>
+      </div>`;
+    try {
+      const start = await api<AutoSelectStartResponse>(`/api/subscriptions/${subId}/auto-select`, {
+        method: "POST",
+        body: JSON.stringify({ sites }),
+      });
+      resultBox.innerHTML = renderAutoSelectProgress({
+        jobId: start.jobId,
+        subscriptionId: start.subscriptionId,
+        phase: start.phase,
+        checked: 0,
+        total: start.total,
+        attempts: [],
+        finished: false,
+      });
+      const final = await pollAutoSelectJob(subId, start.jobId, resultBox);
+      resultBox.innerHTML = renderAutoSelectResult(final);
+      if (final.selectedNodeId) {
+        showToast(`Выбран сервер: ${final.selectedNodeName ?? final.selectedNodeId}`);
+      } else {
+        showToast(final.message || final.error || "Подходящий сервер не найден", true);
+      }
+      await refreshStatus();
+      await loadSubscriptions();
+    } catch (err) {
+      resultBox.innerHTML = "";
+      showToast(err instanceof Error ? err.message : "Ошибка автовыбора", true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+async function pollAutoSelectJob(
+  subId: string,
+  jobId: string,
+  resultBox: HTMLElement,
+): Promise<AutoSelectJobStatus> {
+  for (;;) {
+    await new Promise((r) => window.setTimeout(r, 450));
+    const st = await api<AutoSelectJobStatus>(
+      `/api/subscriptions/${subId}/auto-select/${encodeURIComponent(jobId)}`,
+    );
+    if (!st.finished) {
+      resultBox.innerHTML = renderAutoSelectProgress(st);
+      continue;
+    }
+    return st;
+  }
 }
 
 async function getPersonalReadiness(): Promise<PersonalReadiness> {
@@ -542,7 +633,7 @@ function renderNodeRow(
   sortMode: NodeSortMode,
 ): string {
   const p = pingMap.get(n.id);
-  const ping = p?.ok ? formatPing(p.latencyMs) : p?.error ? "недоступен" : "";
+  const ping = p?.ok ? formatPing(p.latencyMs, p.mode) : p?.error ? "недоступен" : "";
   const isSelected = n.id === selectedNodeId;
   const sel = isSelected ? " is-selected" : "";
   const picks = selectCounts[n.id] ?? 0;
@@ -811,6 +902,7 @@ async function loadSubscriptions() {
                 : ""
             }
             <button type="button" data-ping="${s.id}">Проверить пинг</button>
+            <button type="button" class="secondary" data-autoselect="${s.id}">Автовыбор</button>
             ${nodeSortSelectHtml(s.id)}
           </div>
           <ul class="nodes-list" data-list="${s.id}"></ul>
@@ -941,14 +1033,29 @@ async function loadSubscriptions() {
           getNodeSort(id),
           sub?.nodeSelectCounts ?? {},
         );
+        const mode = pings.find((p) => p.mode)?.mode;
         if (getNodeSort(id) === "ping") {
-          showToast("Список отсортирован по пингу");
+          showToast(
+            mode === "icmp"
+              ? "Пинг ICMP (личный VPN включён — TCP был бы ложным ~0 ms)"
+              : "Список отсортирован по TCP-пингу до порта сервера",
+          );
         }
       } catch (e) {
         showToast(e instanceof Error ? e.message : "Ошибка пинга", true);
       } finally {
         (btn as HTMLButtonElement).disabled = false;
       }
+    });
+  });
+
+  box.querySelectorAll("[data-autoselect]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const id = (btn as HTMLButtonElement).dataset.autoselect!;
+      const name =
+        btn.closest(".sub-card")?.querySelector("strong")?.textContent?.trim() || "подписка";
+      void loadRules().then(() => openAutoSelectModal(id, name));
     });
   });
 

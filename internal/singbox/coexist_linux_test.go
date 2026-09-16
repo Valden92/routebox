@@ -20,7 +20,7 @@ func TestWriteConfigCoexistHasHijackAndIsolation(t *testing.T) {
 
 	sysUp := true
 	sysIface := "tun0"
-	outbound, _ := uriToOutbound(node)
+	outbound, _ := uriToOutbound(node, false)
 	tunInbound := map[string]any{
 		"type": "tun", "tag": "tun-in", "interface_name": "tun100",
 		"address": []string{"172.19.0.1/30"}, "auto_route": true, "strict_route": !sysUp,

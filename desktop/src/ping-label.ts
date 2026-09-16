@@ -20,8 +20,12 @@ export function pingLevelLabel(ms: number): string {
   return LABELS[pingLevel(ms)];
 }
 
-/** «42 ms (низкий)» */
-export function formatPing(ms: number | null | undefined): string {
+/** «42 ms (низкий)» или «42 ms (низкий, icmp)» */
+export function formatPing(ms: number | null | undefined, mode?: string | null): string {
   if (ms == null || Number.isNaN(ms)) return "—";
-  return `${Math.round(ms)} ms (${pingLevelLabel(ms)})`;
+  const base = `${Math.round(ms)} ms (${pingLevelLabel(ms)}`;
+  if (mode === "icmp" || mode === "tcp") {
+    return `${base}, ${mode})`;
+  }
+  return `${base})`;
 }

@@ -16,6 +16,8 @@ describe("pingLevel", () => {
 describe("formatPing", () => {
   it("formats with label", () => {
     expect(formatPing(42)).toBe("42 ms (низкий)");
+    expect(formatPing(42, "tcp")).toBe("42 ms (низкий, tcp)");
+    expect(formatPing(42, "icmp")).toBe("42 ms (низкий, icmp)");
     expect(formatPing(null)).toBe("—");
     expect(formatPing(undefined)).toBe("—");
     expect(formatPing(Number.NaN)).toBe("—");

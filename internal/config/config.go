@@ -50,7 +50,9 @@ type Subscription struct {
 	LastRefresh            time.Time      `json:"lastRefresh,omitempty"`
 	SelectedNodeID         string         `json:"selectedNodeId,omitempty"`
 	NodeSelectCounts       map[string]int `json:"nodeSelectCounts,omitempty"` // nodeId → число выборов
-	Enabled                bool           `json:"enabled"`
+	// NodeAutoSelectWeights — вес автовыбора: успех +1, провал −1 (порядок: вес ↓, затем пинг).
+	NodeAutoSelectWeights map[string]int `json:"nodeAutoSelectWeights,omitempty"`
+	Enabled               bool           `json:"enabled"`
 	// Метаданные провайдера (Subscription-Userinfo и др.) после fetch URL.
 	TrafficUpload              int64     `json:"trafficUpload,omitempty"`
 	TrafficDownload            int64     `json:"trafficDownload,omitempty"`
@@ -82,6 +84,14 @@ type PersonalVPN struct {
 	ActiveSubscriptionID string `json:"activeSubscriptionId"`
 	AutoConnect          bool   `json:"autoConnect"`
 	Enabled              bool   `json:"enabled"`
+	// TLSFragment — фрагментация TLS ClientHello (анти-DPI, аналог tlshello в мобильных клиентах).
+	// nil = включено по умолчанию; поле опционально для совместимости старых settings.json.
+	TLSFragment *bool `json:"tlsFragment,omitempty"`
+}
+
+// FragmentTLS — включена ли фрагментация TLS (по умолчанию да).
+func (p PersonalVPN) FragmentTLS() bool {
+	return p.TLSFragment == nil || *p.TLSFragment
 }
 
 type Settings struct {

@@ -78,12 +78,39 @@ func clashProxyToURI(m map[string]any) (string, error) {
 	switch typ {
 	case "vless":
 		return clashVLESSURI(m, server, port, name)
+	case "vmess":
+		return clashVmessURI(m, server, port, name)
+	case "trojan":
+		return clashTrojanURI(m, server, port, name)
 	case "ss", "shadowsocks":
 		return clashSSURI(m, server, port, name)
 	case "hysteria2", "hy2":
 		return clashHysteria2URI(m, server, port, name)
 	default:
 		return "", fmt.Errorf("unsupported type %s", typ)
+	}
+}
+
+// setTransportQuery переносит transport-настройки Clash (ws-opts/h2-opts/grpc-opts)
+// в query-параметры канонического share-URI.
+func setTransportQuery(q url.Values, m map[string]any, network string) {
+	switch network {
+	case "ws", "http", "h2", "grpc", "httpupgrade":
+		if path := clashNestedString(m, "ws-opts", "path"); path != "" {
+			q.Set("path", path)
+		}
+		if path := clashNestedString(m, "h2-opts", "path"); path != "" {
+			q.Set("path", path)
+		}
+		if path := clashNestedString(m, "http-opts", "path"); path != "" {
+			q.Set("path", path)
+		}
+		if svc := clashNestedString(m, "grpc-opts", "grpc-service-name"); svc != "" {
+			q.Set("serviceName", svc)
+		}
+		if host := clashWSHost(m); host != "" {
+			q.Set("host", host)
+		}
 	}
 }
 
@@ -102,20 +129,7 @@ func clashVLESSURI(m map[string]any, server string, port int, name string) (stri
 		network = "tcp"
 	}
 	q.Set("type", network)
-	if network == "ws" || network == "http" || network == "h2" || network == "grpc" {
-		if path := clashNestedString(m, "ws-opts", "path"); path != "" {
-			q.Set("path", path)
-		}
-		if path := clashNestedString(m, "h2-opts", "path"); path != "" {
-			q.Set("path", path)
-		}
-		if svc := clashNestedString(m, "grpc-opts", "grpc-service-name"); svc != "" {
-			q.Set("serviceName", svc)
-		}
-		if host := clashWSHost(m); host != "" {
-			q.Set("host", host)
-		}
-	}
+	setTransportQuery(q, m, network)
 	tlsEnabled := clashBool(m, "tls") || strings.EqualFold(clashString(m, "security"), "reality") || clashMap(m, "reality-opts") != nil
 	sni := firstNonEmpty(clashString(m, "servername"), clashString(m, "sni"))
 	fp := firstNonEmpty(clashString(m, "client-fingerprint"), clashString(m, "fingerprint"))
@@ -148,6 +162,113 @@ func clashVLESSURI(m map[string]any, server string, port int, name string) (stri
 	u := &url.URL{
 		Scheme:   "vless",
 		User:     url.User(uuid),
+		Host:     fmt.Sprintf("%s:%d", server, port),
+		RawQuery: q.Encode(),
+		Fragment: name,
+	}
+	return u.String(), nil
+}
+
+func clashVmessURI(m map[string]any, server string, port int, name string) (string, error) {
+	uid := strings.TrimSpace(clashString(m, "uuid"))
+	if uid == "" {
+		return "", fmt.Errorf("vmess: нет uuid")
+	}
+	q := url.Values{}
+	q.Set("encryption", firstNonEmpty(clashString(m, "cipher"), "auto"))
+	if aid := clashInt(m, "alterId"); aid > 0 {
+		q.Set("aid", strconv.Itoa(aid))
+	}
+	network := strings.ToLower(clashString(m, "network"))
+	if network == "" {
+		network = "tcp"
+	}
+	q.Set("type", network)
+	setTransportQuery(q, m, network)
+	sni := firstNonEmpty(clashString(m, "servername"), clashString(m, "sni"))
+	fp := firstNonEmpty(clashString(m, "client-fingerprint"), clashString(m, "fingerprint"))
+	reality := clashMap(m, "reality-opts")
+	if reality != nil {
+		q.Set("security", "reality")
+		if pbk := clashString(reality, "public-key"); pbk != "" {
+			q.Set("pbk", pbk)
+		}
+		if sid := clashString(reality, "short-id"); sid != "" {
+			q.Set("sid", sid)
+		}
+		if sni != "" {
+			q.Set("sni", sni)
+		}
+		if fp != "" {
+			q.Set("fp", fp)
+		}
+	} else if clashBool(m, "tls") {
+		q.Set("security", "tls")
+		if sni != "" {
+			q.Set("sni", sni)
+		}
+		if fp != "" {
+			q.Set("fp", fp)
+		}
+	} else {
+		q.Set("security", "none")
+	}
+	if clashBool(m, "skip-cert-verify") {
+		q.Set("allowInsecure", "1")
+	}
+	u := &url.URL{
+		Scheme:   "vmess",
+		User:     url.User(uid),
+		Host:     fmt.Sprintf("%s:%d", server, port),
+		RawQuery: q.Encode(),
+		Fragment: name,
+	}
+	return u.String(), nil
+}
+
+func clashTrojanURI(m map[string]any, server string, port int, name string) (string, error) {
+	pass := clashString(m, "password")
+	if pass == "" {
+		return "", fmt.Errorf("trojan: нет password")
+	}
+	q := url.Values{}
+	network := strings.ToLower(clashString(m, "network"))
+	if network != "" && network != "tcp" {
+		q.Set("type", network)
+		setTransportQuery(q, m, network)
+	}
+	sni := firstNonEmpty(clashString(m, "servername"), clashString(m, "sni"))
+	fp := firstNonEmpty(clashString(m, "client-fingerprint"), clashString(m, "fingerprint"))
+	if reality := clashMap(m, "reality-opts"); reality != nil {
+		q.Set("security", "reality")
+		if pbk := clashString(reality, "public-key"); pbk != "" {
+			q.Set("pbk", pbk)
+		}
+		if sid := clashString(reality, "short-id"); sid != "" {
+			q.Set("sid", sid)
+		}
+		if sni != "" {
+			q.Set("sni", sni)
+		}
+		if fp != "" {
+			q.Set("fp", fp)
+		}
+	} else {
+		// trojan по умолчанию работает поверх TLS.
+		q.Set("security", "tls")
+		if sni != "" {
+			q.Set("sni", sni)
+		}
+		if fp != "" {
+			q.Set("fp", fp)
+		}
+	}
+	if clashBool(m, "skip-cert-verify") {
+		q.Set("allowInsecure", "1")
+	}
+	u := &url.URL{
+		Scheme:   "trojan",
+		User:     url.User(pass),
 		Host:     fmt.Sprintf("%s:%d", server, port),
 		RawQuery: q.Encode(),
 		Fragment: name,

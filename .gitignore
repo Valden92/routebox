@@ -9,3 +9,4 @@
 .tmp/
 *.enc
 .DS_Store
+.idea

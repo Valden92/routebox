@@ -2,6 +2,7 @@ package subscription
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -11,6 +12,24 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// FlexInt — число, которое в JSON может прийти и строкой ("443" и 443,
+// как в vmess-JSON от разных панелей).
+type FlexInt int
+
+func (f *FlexInt) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(strings.TrimSpace(string(b)), `"`)
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return err
+	}
+	*f = FlexInt(n)
+	return nil
+}
 
 type Node struct {
 	ID       string `json:"id"`
@@ -243,6 +262,12 @@ func parseURI(raw string) (Node, error) {
 	if _, ok := allowedSchemes[proto]; !ok {
 		return Node{}, fmt.Errorf("unsupported scheme")
 	}
+	if proto == "vmess" {
+		if n, ok := vmessBase64Node(raw); ok {
+			return n, nil
+		}
+		// URI-форма vmess://uuid@host:port?… — общий путь ниже.
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return Node{}, err
@@ -267,4 +292,53 @@ func parseURI(raw string) (Node, error) {
 		RawURI:   raw,
 		SNI:      sni,
 	}, nil
+}
+
+// vmessBase64Node разбирает формат vmess://base64(JSON) (v2rayN и панели 3x-ui).
+// ok=false — это не base64-форма (например vmess://uuid@host:port?…), её парсит общий путь.
+func vmessBase64Node(raw string) (Node, bool) {
+	payload := strings.TrimPrefix(raw, "vmess://")
+	if i := strings.IndexAny(payload, "#?"); i >= 0 {
+		payload = payload[:i]
+	}
+	payload = strings.TrimSpace(payload)
+	if payload == "" || strings.Contains(payload, "@") {
+		return Node{}, false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(payload)
+	}
+	if err != nil {
+		decoded, err = base64.URLEncoding.DecodeString(payload)
+	}
+	if err != nil {
+		decoded, err = base64.RawURLEncoding.DecodeString(payload)
+	}
+	if err != nil {
+		return Node{}, false
+	}
+	var j struct {
+		PS   string  `json:"ps"`
+		Add  string  `json:"add"`
+		Port FlexInt `json:"port"`
+	}
+	if json.Unmarshal(decoded, &j) != nil {
+		return Node{}, false
+	}
+	if strings.TrimSpace(j.Add) == "" || j.Port <= 0 {
+		return Node{}, false
+	}
+	name := strings.TrimSpace(j.PS)
+	if name == "" {
+		name = j.Add
+	}
+	return Node{
+		ID:       uuid.NewSHA1(uuid.NameSpaceURL, []byte(raw)).String(),
+		Name:     name,
+		Protocol: "vmess",
+		Host:     j.Add,
+		Port:     int(j.Port),
+		RawURI:   raw,
+	}, true
 }
