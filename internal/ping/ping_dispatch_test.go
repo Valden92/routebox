@@ -27,8 +27,9 @@ func TestProbeOneDispatchesByMode(t *testing.T) {
 	_ = probeOne(ctx, "", subscription.Node{ID: "2", Protocol: "openvpn", Network: "udp", Host: "h", Port: 1194}, false)
 	_ = probeOne(ctx, "", subscription.Node{ID: "3", Protocol: "openvpn", Network: "tcp", Host: "h", Port: 443}, false)
 	_ = probeOne(ctx, "", subscription.Node{ID: "4", Protocol: "vless", Host: "h", Port: 443}, true)
+	_ = probeOne(ctx, "", subscription.Node{ID: "5", Protocol: "hy2", Host: "h", Port: 443}, false)
 
-	if tcpCalls != 2 || icmpCalls != 2 {
+	if tcpCalls != 2 || icmpCalls != 3 {
 		t.Fatalf("tcp=%d icmp=%d", tcpCalls, icmpCalls)
 	}
 }
