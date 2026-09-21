@@ -120,7 +120,9 @@ func OrderByWeightThenPing(nodes []subscription.Node, results []Result, weights 
 
 // ProbeMode — как проверять доступность узла (без учёта PreferICMP).
 func ProbeMode(n subscription.Node) string {
-	if strings.EqualFold(n.Protocol, "openvpn") {
+	proto := strings.ToLower(strings.TrimSpace(n.Protocol))
+	switch proto {
+	case "openvpn":
 		netw := strings.ToLower(strings.TrimSpace(n.Network))
 		if netw == "tcp" {
 			return "tcp"
@@ -128,8 +130,13 @@ func ProbeMode(n subscription.Node) string {
 		// UDP OpenVPN: порт не слушает TCP; сырой UDP без tls-auth HMAC молчит.
 		// Проверяем ICMP до host (как «жив ли сервер»).
 		return "icmp"
+	case "hysteria2", "hy2", "hysteria", "tuic":
+		// QUIC/UDP inbound — TCP dial к :443 даёт ложный «недоступен» и
+		// блокирует personal-connect до Start (типично Nuxt/HY2 при рабочем VPN).
+		return "icmp"
+	default:
+		return "tcp"
 	}
-	return "tcp"
 }
 
 func probeOne(ctx context.Context, iface string, n subscription.Node, preferICMP bool) Result {

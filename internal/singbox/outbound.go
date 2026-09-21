@@ -436,7 +436,10 @@ func hysteria2Outbound(tag string, u *url.URL) (map[string]any, error) {
 	if sni := q.Get("sni"); sni != "" {
 		tlsParams["server_name"] = sni
 	}
-	if queryInsecure(q) {
+	// Happ/Xray forbid allowInsecure and emit pinSHA256 instead. sing-box has no
+	// cert-fingerprint pin equivalent for HY2 (only SPKI), so treat pin as
+	// "trust this self-signed peer" via insecure for Router BOX.
+	if queryInsecure(q) || queryPinnedCert(q) {
 		tlsParams["insecure"] = true
 	}
 	if alpn := strings.TrimSpace(q.Get("alpn")); alpn != "" {
@@ -477,6 +480,15 @@ func queryInsecure(q url.Values) bool {
 	for _, k := range []string{"allowInsecure", "allow_insecure", "insecure", "skipCertVerify"} {
 		v := strings.ToLower(q.Get(k))
 		if v == "1" || v == "true" {
+			return true
+		}
+	}
+	return false
+}
+
+func queryPinnedCert(q url.Values) bool {
+	for _, k := range []string{"pinSHA256", "pin_sha256", "pinnedPeerCertSha256", "pcs"} {
+		if strings.TrimSpace(q.Get(k)) != "" {
 			return true
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -265,6 +266,7 @@ func (s *Server) lock(w http.ResponseWriter, r *http.Request) {
 func (s *Server) personalConnect(w http.ResponseWriter, r *http.Request) {
 	ready := s.personalReadiness()
 	if !ready.Configured {
+		log.Printf("personal-connect: blocked readiness reason=%s msg=%q", ready.Reason, ready.Message)
 		writeJSONError(w, http.StatusConflict, ready.Reason, ready.Message)
 		return
 	}
@@ -276,10 +278,20 @@ func (s *Server) personalConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	node, err := s.selectedNode(st)
 	if err != nil {
+		log.Printf("personal-connect: selectedNode err=%v activeSub=%q", err, st.PersonalVPN.ActiveSubscriptionID)
 		writeJSONError(w, http.StatusBadRequest, "invalid_config", err.Error())
 		return
 	}
-	if err := singbox.ProbeProxyReachable(node, st.MainInterface, s.SingBox.Running()); err != nil {
+	sysUp := singbox.SystemVPNUp(st)
+	running := s.SingBox.Running()
+	// При системном VPN SO_BINDTODEVICE на mainIface часто ломает TCP-пробу;
+	// UDP-протоколы (hy2) вообще не слушают TCP. ICMP до host надёжнее.
+	preferICMP := running || sysUp || ping.ProbeMode(node) == "icmp"
+	log.Printf("personal-connect: sub=%s node=%s proto=%s net=%s %s:%d running=%v sysVPN=%v preferICMP=%v iface=%q mode=%s",
+		st.PersonalVPN.ActiveSubscriptionID, node.Name, node.Protocol, node.Network,
+		node.Host, node.Port, running, sysUp, preferICMP, st.MainInterface, ping.ProbeMode(node))
+	if err := singbox.ProbeProxyReachable(node, st.MainInterface, preferICMP); err != nil {
+		log.Printf("personal-connect: probe failed: %v", err)
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -291,9 +303,11 @@ func (s *Server) personalConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	st = s.Store.Get()
 	if err := s.ensureRouter(r.Context()); err != nil {
+		log.Printf("personal-connect: ensureRouter failed: %v", err)
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	log.Printf("personal-connect: ok mode=%s running=%v", singbox.ConfigModeFor(st), s.SingBox.Running())
 	writeJSON(w, map[string]any{"running": true, "node": node, "configMode": singbox.ConfigModeFor(st)})
 }
 
@@ -320,19 +334,31 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 	var node *subscription.Node
 	if n, err := s.selectedNode(st); err == nil {
 		node = &n
+	} else {
+		log.Printf("ensureRouter: no selected node (%v); personalEnabled=%v", err, st.PersonalVPN.Enabled)
 	}
+	nodeName := ""
+	nodeProto := ""
+	if node != nil {
+		nodeName = node.Name
+		nodeProto = node.Protocol
+	}
+	log.Printf("ensureRouter: personalEnabled=%v sysVPN=%v wasRunning=%v node=%q proto=%s",
+		st.PersonalVPN.Enabled, singbox.SystemVPNUp(st), s.SingBox.Running(), nodeName, nodeProto)
 	stoppedForReconfigure := false
 	if s.SingBox.Running() {
 		_ = s.SingBox.Stop()
 		stoppedForReconfigure = true
 	}
 	if err := singbox.WriteRouterConfig(st.SingBoxConfigPath, node, st, "tun100"); err != nil {
+		log.Printf("ensureRouter: WriteRouterConfig failed: %v", err)
 		if stoppedForReconfigure {
 			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
 		}
 		return err
 	}
 	if err := singbox.ValidateWrittenConfig(st.SingBoxConfigPath, st); err != nil {
+		log.Printf("ensureRouter: ValidateWrittenConfig failed: %v", err)
 		if stoppedForReconfigure {
 			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
 		}
@@ -340,6 +366,7 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 	}
 	singbox.SnapshotWorkVPNRoutes(singbox.SystemTunIface(st))
 	if err := s.SingBox.Start(ctx); err != nil {
+		log.Printf("ensureRouter: Start failed: %v", err)
 		singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
 		return err
 	}
@@ -349,8 +376,10 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 		if msg == "" {
 			msg = "sing-box не запустился"
 		}
+		log.Printf("ensureRouter: not running after Start: %s", msg)
 		return fmt.Errorf("%s", msg)
 	}
+	log.Printf("ensureRouter: ok mode=%s", singbox.ConfigModeFor(st))
 	return nil
 }
 
@@ -362,15 +391,22 @@ func (s *Server) personalDisconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.Store.Get()
-	if singbox.SystemVPNUp(st) && s.SingBox.Running() {
-		writeJSON(w, map[string]string{"status": "personal_disabled_deferred"})
-		return
-	}
+	sysUp := singbox.SystemVPNUp(st)
+	wasRunning := s.SingBox.Running()
+	log.Printf("personal-disconnect: sysVPN=%v wasRunning=%v (reconfigure without personal)", sysUp, wasRunning)
+	// Раньше при sysVPN+running делали «deferred» и НЕ вызывали ensureRouter —
+	// sing-box продолжал гонять личный outbound, а следующая подписка «магически»
+	// начинала работать из‑за PreferICMP/тёплого процесса.
 	if err := s.ensureRouter(r.Context()); err != nil {
+		log.Printf("personal-disconnect: ensureRouter failed: %v", err)
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	writeJSON(w, map[string]string{"status": "personal_disabled"})
+	status := "personal_disabled"
+	if sysUp {
+		status = "personal_disabled_deferred"
+	}
+	writeJSON(w, map[string]string{"status": status})
 }
 
 func (s *Server) personalStatus(w http.ResponseWriter, _ *http.Request) {
@@ -817,6 +853,7 @@ func (s *Server) deleteSubscription(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteSubscriptionID(w http.ResponseWriter, id string) {
 	st := s.Store.Get()
 	found := false
+	wasActive := false
 	err := s.Store.Update(func(cur *config.Settings) {
 		var kept []config.Subscription
 		for _, sub := range cur.Subscriptions {
@@ -827,7 +864,8 @@ func (s *Server) deleteSubscriptionID(w http.ResponseWriter, id string) {
 			kept = append(kept, sub)
 		}
 		cur.Subscriptions = kept
-		if cur.PersonalVPN.ActiveSubscriptionID == id {
+		if PersonalVPNTiedToSubscription(cur.PersonalVPN.ActiveSubscriptionID, id) {
+			wasActive = true
 			cur.PersonalVPN.ActiveSubscriptionID = ""
 		}
 	})
@@ -840,11 +878,18 @@ func (s *Server) deleteSubscriptionID(w http.ResponseWriter, id string) {
 		return
 	}
 	_ = subscription.DeleteCache(st.DataDir, id)
-	if s.SingBox.Running() {
+	// Раньше Stop вызывался при удалении ЛЮБОЙ подписки → рвал чужой активный VPN
+	// и RestoreAfterPersonalVPNOn ломал маршруты/пинг до следующего connect.
+	if wasActive && s.SingBox.Running() {
 		_ = s.SingBox.Stop()
 		singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
 	}
 	writeJSON(w, map[string]string{"status": "deleted"})
+}
+
+// PersonalVPNTiedToSubscription — удаление этой подписки должно гасить личный VPN.
+func PersonalVPNTiedToSubscription(activeID, deletedID string) bool {
+	return deletedID != "" && activeID == deletedID
 }
 
 func (s *Server) pingNodes(w http.ResponseWriter, r *http.Request) {

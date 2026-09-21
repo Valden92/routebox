@@ -16,7 +16,9 @@ func TestProbeMode(t *testing.T) {
 		want string
 	}{
 		{subscription.Node{Protocol: "vless"}, "tcp"},
-		{subscription.Node{Protocol: "hy2", Host: "x", Port: 443}, "tcp"},
+		{subscription.Node{Protocol: "hy2", Host: "x", Port: 443}, "icmp"},
+		{subscription.Node{Protocol: "hysteria2", Host: "x", Port: 443}, "icmp"},
+		{subscription.Node{Protocol: "tuic", Host: "x", Port: 443}, "icmp"},
 		{subscription.Node{Protocol: "openvpn", Network: "udp"}, "icmp"},
 		{subscription.Node{Protocol: "openvpn", Network: ""}, "icmp"},
 		{subscription.Node{Protocol: "openvpn", Network: "tcp"}, "tcp"},

@@ -19,14 +19,12 @@ func TestProbeProxyReachableRejectsEmpty(t *testing.T) {
 	}
 }
 
-func TestProbeProxyReachableOpenVPNUDPNotTCP(t *testing.T) {
-	// Регрессия connect gate: dial tcp :1194 на UDP OpenVPN.
-	// ICMP до loopback ок при закрытом TCP/1194.
+func TestProbeProxyReachableHysteria2UsesICMP(t *testing.T) {
+	// HY2 — UDP/QUIC: TCP :443 на loopback закрыт, ICMP до 127.0.0.1 обычно ок.
 	err := singbox.ProbeProxyReachable(subscription.Node{
-		Protocol: "openvpn",
-		Network:  "udp",
+		Protocol: "hysteria2",
 		Host:     "127.0.0.1",
-		Port:     1194,
+		Port:     443,
 	}, "", false)
 	if err != nil {
 		if strings.Contains(err.Error(), "недоступен") {

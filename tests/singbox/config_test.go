@@ -45,6 +45,24 @@ func TestURIToOutboundHysteria2(t *testing.T) {
 	}
 }
 
+func TestURIToOutboundHysteria2PinSHA256ImpliesInsecure(t *testing.T) {
+	node := subscription.Node{
+		RawURI: "hy2://secret@31.77.218.101:443?sni=31.77.218.101&obfs=salamander&obfs-password=x&pinSHA256=aabbcc#N",
+	}
+	o, err := singbox.URIToOutbound(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tls, ok := o["tls"].(map[string]any)
+	if !ok || tls["insecure"] != true {
+		t.Fatalf("pinSHA256 must map to tls.insecure for self-signed HY2, got %+v", o["tls"])
+	}
+	obfs, ok := o["obfs"].(map[string]any)
+	if !ok || obfs["type"] != "salamander" || obfs["password"] != "x" {
+		t.Fatalf("obfs %+v", o["obfs"])
+	}
+}
+
 func TestURIToOutboundShadowsocks(t *testing.T) {
 	node := subscription.Node{
 		RawURI: "ss://aes-256-gcm:pass@ss.example.com:8388",
