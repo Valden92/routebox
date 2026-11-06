@@ -313,3 +313,60 @@ func containsAll(s string, parts ...string) bool {
 	}
 	return true
 }
+
+func TestWriteRouterConfigManualWildcardOverridesAutoExact(t *testing.T) {
+	dir := t.TempDir()
+	st := config.DefaultSettings(dir)
+	st.SystemVPN.NMConnectionID = "PTsecurity-nonexistent-ci-test"
+	st.PersonalVPN.Enabled = true
+	st.MainInterface = "lo"
+	st.DomainRules = []config.DomainRule{
+		{ID: "auto", Pattern: "ws.chatgpt.com", Path: config.RouteDirect, Source: "auto", Enabled: true},
+		{ID: "wild", Pattern: "*.chatgpt.com", Path: config.RoutePersonal, Source: "manual", Enabled: true},
+		{ID: "exception", Pattern: "special.chatgpt.com", Path: config.RouteDirect, Source: "manual", Enabled: true},
+	}
+	node := subscription.Node{Host: "node.example.com", Port: 443,
+		RawURI: "vless://aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa@node.example.com:443?encryption=none&security=tls&sni=node.example.com#T"}
+	path := filepath.Join(dir, "sing-box.json")
+	if err := singbox.WriteRouterConfig(path, &node, st, "tun100"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	rules := cfg["route"].(map[string]any)["rules"].([]any)
+	for _, tc := range []struct{ host, want string }{
+		{"ws.chatgpt.com", "proxy"}, {"new.chatgpt.com", "proxy"}, {"special.chatgpt.com", "direct"},
+	} {
+		got := ""
+		for _, item := range rules {
+			r := item.(map[string]any)
+			domains, _ := r["domain"].([]any)
+			suffixes, _ := r["domain_suffix"].([]any)
+			matches := false
+			for _, d := range domains {
+				if tc.host == d.(string) {
+					matches = true
+				}
+			}
+			for _, d := range suffixes {
+				suffix := d.(string)
+				if tc.host == suffix || strings.HasSuffix(tc.host, "."+suffix) {
+					matches = true
+				}
+			}
+			if matches {
+				got, _ = r["outbound"].(string)
+				break
+			}
+		}
+		if got != tc.want {
+			t.Fatalf("%s: got %q want %q", tc.host, got, tc.want)
+		}
+	}
+}

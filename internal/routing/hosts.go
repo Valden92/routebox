@@ -3,6 +3,7 @@ package routing
 import (
 	"net"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/Valden92/routebox/internal/config"
@@ -25,8 +26,8 @@ func NormalizeRulePattern(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	if strings.HasPrefix(raw, "*.") {
-		return raw
+	if strings.HasPrefix(raw, "*") {
+		return "*." + strings.TrimPrefix(strings.TrimPrefix(raw, "*"), ".")
 	}
 	if !strings.Contains(raw, "://") {
 		raw = "https://" + raw
@@ -118,7 +119,8 @@ func betterDomainRule(old, neu config.DomainRule) bool {
 	return true
 }
 
-// CollapseDomainRules — одно правило на pattern (порядок первого появления).
+// CollapseDomainRules — одно правило на pattern; manual перед auto,
+// внутри источника более конкретные правила перед широкими масками.
 // Нужно, чтобы auto direct не перебивал позже добавленный manual personal в sing-box.
 func CollapseDomainRules(rules []config.DomainRule) []config.DomainRule {
 	type entry struct {
@@ -144,6 +146,18 @@ func CollapseDomainRules(rules []config.DomainRule) []config.DomainRule {
 	for _, k := range order {
 		out = append(out, byKey[k].rule)
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		iManual, jManual := out[i].Source == "manual", out[j].Source == "manual"
+		if iManual != jManual {
+			return iManual
+		}
+		iHost := strings.TrimPrefix(out[i].Pattern, "*.")
+		jHost := strings.TrimPrefix(out[j].Pattern, "*.")
+		if len(iHost) != len(jHost) {
+			return len(iHost) > len(jHost)
+		}
+		return !strings.HasPrefix(out[i].Pattern, "*.") && strings.HasPrefix(out[j].Pattern, "*.")
+	})
 	return out
 }
 

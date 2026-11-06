@@ -40,6 +40,8 @@ func TestNormalizeRulePattern(t *testing.T) {
 	}{
 		{"", ""},
 		{"*.ptsecurity.ru", "*.ptsecurity.ru"},
+		{"*youtube.com", "*.youtube.com"},
+		{" *GoogleVideo.COM ", "*.googlevideo.com"},
 		{"HTTPS://Music.Yandex.RU/path", "music.yandex.ru"},
 		{"music.yandex.ru", "music.yandex.ru"},
 		{"https://music.yandex.ru:443/", "music.yandex.ru"},
@@ -130,5 +132,24 @@ func TestCollapseDomainRulesPrefersManual(t *testing.T) {
 	}
 	if got[1].ID != "3" {
 		t.Fatalf("other %+v", got[1])
+	}
+}
+
+func TestCollapseDomainRulesManualWildcardPriority(t *testing.T) {
+	rules := []config.DomainRule{
+		{ID: "auto-exact", Pattern: "ws.chatgpt.com", Source: "auto", Path: config.RouteDirect},
+		{ID: "manual-wide", Pattern: "*.chatgpt.com", Source: "manual", Path: config.RoutePersonal},
+		{ID: "manual-nested", Pattern: "*.sub.chatgpt.com", Source: "manual", Path: config.RouteDirect},
+		{ID: "manual-exact", Pattern: "sub.chatgpt.com", Source: "manual", Path: config.RouteWork},
+	}
+	got := routing.CollapseDomainRules(rules)
+	want := []string{"manual-exact", "manual-nested", "manual-wide", "auto-exact"}
+	if len(got) != len(want) {
+		t.Fatalf("rules: %+v", got)
+	}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Fatalf("rule %d: got %s want %s", i, got[i].ID, id)
+		}
 	}
 }
