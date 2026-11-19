@@ -2,149 +2,127 @@
 
 Десктопное приложение для Linux: **Tauri UI** + **Go-демон** с трёхуровневой маршрутизацией трафика. Пользователь управляет личным VPN из приложения; системный (рабочий) VPN — только через NetworkManager/GNOME.
 
-**Индекс GitNexus:** 1132 символа, 3076 связей, 92 execution flows (проиндексировано 2026-08-15). Переиндексация: `npx gitnexus analyze` (embeddings = 0; `--embeddings` только если нужны).
+## Обязательные правила работы
 
----
+- Checkout, из которого пользователь запустил приложение, сохранять как рабочий.
+  Перед правками исходников проверить `git config --get vpnrouter.developmentRoot`
+  и перейти в указанный отдельный dev-checkout. Подготовка: `make dev-prepare`.
+  Не переключать ветки, не выполнять pull, установку зависимостей и сборку
+  в рабочем checkout ради разработки. Исключение — согласованная настройка
+  самого workflow без изменения исходников/бинарников запущенного приложения.
+  Подробности: `docs/DEVELOPMENT.md`. Реальную работоспособность проверяет пользователь.
+- Основная ветка — `main`. Перед изменениями проверить ветку и dirty state;
+  для каждой новой задачи с правками создать отдельную `feature/<task>` от `main`.
+  Если задача уже ведётся в своей фичевой ветке — продолжать в ней.
+  Пользовательские правки сохранять; commit, push и merge — только по явной просьбе.
+- Приложение постоянно обслуживает сеть пользователя и обеспечивает связь с агентом.
+  Подготовка правок не разрешает перезапускать работающий демон/sing-box,
+  переключать VPN, переприменять маршрутизацию или менять DNS, NM и polkit.
+  Такие действия сначала согласовать с пользователем. Это относится и к
+  `make dev`, `make daemon`, `make restart`, `make stop`, `make sync`,
+  `make recover-network`, `make reset-host*` и изменяющим состояние вызовам API.
+  Уже данное явное разрешение на конкретное действие повторно не запрашивать.
+- Сборки и проверки выполнять без запуска второго маршрутизатора и без замены
+  используемых бинарников или файлов в `~/.config/vpn-router/`.
+  Другие `--data` и `--listen` сами по себе не изолируют TUN, DNS и маршруты хоста.
+- `.gitnexus/` — только локальные индексы, кэши и служебные файлы.
+  Каталог должен оставаться в `.gitignore`; не добавлять его через `git add -f`.
+- OpenSpec использовать только по явному запросу пользователя; наличие файлов
+  или навыков OpenSpec не включает этот workflow.
 
-## Быстрый старт
+## Чтение правил Cursor в Codex
 
-```bash
-make sync      # зависимости + setcap sing-box + polkit v6 + NM drop-in (sudo при первом разе)
-make dev       # сборка демона + Tauri UI
-make stop      # остановить демон и sing-box
-make reset-host # сбросить хост-настройку; затем снова make sync
-```
+Этот `AGENTS.md` — точка входа в инструкции проекта. Не полагаться на то,
+что среда автоматически подключит `.cursor/rules/*.mdc`: читать и применять
+их явно по области задачи. Существующие `.mdc` остаются общим источником правил:
 
-- API: `http://127.0.0.1:47891`
-- Конфиг пользователя: `~/.config/vpn-router/`
-- Лог sing-box: `~/.config/vpn-router/sing-box.log`
-- PID демона: `.daemon.pid` в корне проекта
+- Всегда: `.cursor/rules/quality-gate.mdc`.
+- При работе с Go (`**/*.go`): `.cursor/rules/go-style.mdc`.
+- При работе с Go-тестами (`**/*_test.go`): дополнительно `.cursor/rules/go-tests.mdc`.
+- При работе с UI (`desktop/**/*.{ts,css,html}`): `.cursor/rules/desktop-ts.mdc`.
+- При работе с документацией (`docs/**/*.md`): `.cursor/rules/docs-research.mdc`.
 
-Не коммитить без явной просьбы пользователя. Не добавлять широкие polkit-правила `set-default-route` для sudo — ломает MFA системного VPN.
+Для Cursor `.cursor/rules/project-workflow.mdc` помечен `alwaysApply`.
+Общие ограничения хранятся здесь, без отдельных копий для каждой IDE.
+При добавлении нового `.mdc` обновлять этот список областей применения.
 
----
+## Команды и RTK
 
-## Архитектура
+- Явно использовать RTK для поддерживаемых команд: `rtk git status`,
+  `rtk git diff`, `rtk rg`, `rtk go build`, `rtk go test`, `rtk npm run ...`.
+  Поддержку проверять через `rtk --help`; не рассчитывать на shell hooks.
+- Точное чтение инструкций/исходников, JSON для машинного разбора, запись файлов
+  и неподдерживаемые команды выполнять напрямую. Вызовы MCP не оборачивать в RTK.
+- Сохранять exit status; если сокращённого вывода мало, получить полную диагностику.
+  Не устанавливать hooks или инструменты автоматически в рамках обычной правки.
 
-```
-┌─────────────────┐     HTTP :47891    ┌──────────────────────────┐
-│  desktop/       │ ─────────────────► │  cmd/daemon (Go)         │
-│  Tauri + TS     │                    │  internal/api            │
-└─────────────────┘                    └───────────┬──────────────┘
-                                                   │
-         ┌─────────────────────────────────────────┼─────────────────────────┐
-         ▼                     ▼                   ▼                         ▼
-   Wi-Fi (direct)      tun0 (system VPN)    tun100 (sing-box)        nmcli / resolvectl
-   mainInterface       NM профиль PTsecurity  личный VPN               статус, DNS
-```
+## Проверки при работающем маршрутизаторе
 
-| Компонент | Путь | Роль |
-|-----------|------|------|
-| Точка входа демона | `cmd/daemon/main.go` | Store, sing-box Manager, graceful shutdown + recover маршрутов |
-| HTTP API | `internal/api/server.go`, `personal.go` | chi router, `apiVersion = 5` |
-| sing-box | `internal/singbox/` | Генерация конфига, start/stop, coexist, recover; pin **≥ 1.14.0-beta** (OpenVPN endpoint) |
-| Системный VPN (read-only) | `internal/nm/workvpn.go` | Статус через NM, **без connect/disconnect** |
-| Настройки | `internal/config/config.go` | JSON в `settings.json`, шифрование |
-| Подписки | `internal/subscription/` | VLESS/Hysteria2/SS/VMess/Trojan + **OpenVPN** + Clash; QR в UI (`desktop/src/qr-import.ts`); fetch meta; `RemapSelection` + автовыбор одного узла; **мульти-узел auto-select** (`internal/api/autoselect.go`, UI `desktop/src/autoselect.ts`) |
-| UI | `desktop/src/main.ts`, `api.ts`, `index.html` | Карточки статуса, личный VPN, автовыбор сервера |
-| Хост | `scripts/configure-host-inner.sh`, `polkit-vpn-router.rules` | setcap, NM drop-in, polkit resolve1 только для `tun100` |
+После правок кода обязательны `make check-fmt`, `make lint`, `make test`.
+Перед запуском проверить их рецепты и затронутые тесты: они не должны запускать
+живой sing-box, менять сеть или обращаться к пользовательскому конфигу.
+Использовать `NewTestServer`, временные каталоги и подмены внешних команд.
+Для новых тестов запрет на живой NM/маршруты обязателен.
 
----
-
-## Три пути маршрутизации
-
-| `RoutePath` | UI / смысл | Интерфейс | Кто управляет |
-|-------------|------------|-----------|---------------|
-| `direct` | Прямой интернет | Wi-Fi (`mainInterface`) | — |
-| `work` | «Системный VPN» | `tun0` (NM) | **Только ОС** (NetworkManager) |
-| `personal` | Личный VPN | `tun100` (sing-box) | Приложение |
-
-В API и JSON настроек поле `systemVpn` (миграция со старого `workVpn`). Эндпоинтов `POST /api/work-vpn/*` **нет**.
-
----
-
-## Режим coexist (критично)
-
-Когда системный VPN активен **и** включён личный, sing-box пишет конфиг в режиме **`coexist`**:
-
-- `route_address`: `/1` (изоляция default route)
-- `exclude_interface`: `tun0`
-- outbound `work` для корпоративных маршрутов
-- DNS `dns-work` с корпоративным резолвером
-- **`hijack-dns` включён** (без него личные сайты не работают)
-
-Ключевые файлы: `internal/singbox/coexist_linux.go`, `manager.go` (`WriteConfig`), `config_validate.go`.
-
-Статус API отдаёт `configMode`, `configFileMode`, `configStale`. Если `configStale: true` — на диске старый `sing-box.json`; нужен reconnect или `POST /api/personal-vpn/reapply`.
-
-**Порядок для пользователя:** сначала системный VPN в GNOME → потом выкл/вкл личный в приложении.
-
-Проверка coexist на машине:
+При изменениях Go проверить сборку демона отдельно от рабочего бинарника:
 
 ```bash
-grep -E 'exclude_interface|route_address|"tag": "work"|hijack-dns' ~/.config/vpn-router/sing-box.json
-ip link show tun100
+build_dir=$(mktemp -d /tmp/routebox-build.XXXXXX)
+rtk go build -o "$build_dir/vpn-router-daemon" ./cmd/daemon/
 ```
 
----
+Собранный бинарник не запускать. Пока приложение работает, эта проверка заменяет
+`make build`, который пишет в `bin/` и копирует sidecar. Для TypeScript дополнительно
+выполнить `rtk npm run typecheck` из `desktop/`; для Rust — clippy в отдельном
+`CARGO_TARGET_DIR`, предварительно проверив build scripts и наличие sidecar.
+`make lint-rust` может создавать sidecar: не использовать его вслепую.
 
-## API демона (кратко)
+Ошибки в затронутом коде исправлять. Если проверку блокирует среда или действие,
+затрагивающее работающую сеть, сообщить точную причину и завершить доступные
+безопасные проверки; не объявлять непроверенное поведение исправным.
+Не запускать `make sync` как автоматический способ исправить окружение.
 
-| Метод | Путь | Назначение |
-|-------|------|------------|
-| GET | `/api/health`, `/api/version`, `/api/status` | Живость, фичи, сводный статус |
-| GET/PUT | `/api/settings` | Настройки |
-| POST | `/api/lock`, `/api/unlock` | Шифрование конфига |
-| GET | `/api/personal-vpn/readiness` | Готовность хоста (setcap, NM) |
-| POST | `/api/personal-vpn/connect` | stop → write config → start |
-| POST | `/api/personal-vpn/disconnect` | stop + recover маршрутов |
-| POST | `/api/personal-vpn/reapply` | Перезапись конфига без смены узла |
-| GET | `/api/personal-vpn/status` | Детальный статус |
-| * | `/api/subscriptions/*` | CRUD, refresh, ping, select, **activate**, **auto-select** (`POST …/auto-select` → job; `GET …/auto-select/{jobId}`); `source`: url\|text\|uri\|**ovpn**\|**clash**; meta Userinfo/Profile-*; веса `nodeAutoSelectWeights` |
-| * | `/api/rules/*` | Правила доменов/приложений |
-| GET | `/api/apps` | Скан процессов (Linux) |
-| POST | `/api/probe/site` | Проверка URL по путям |
+Если меняются только Markdown, правила агента или `.gitignore`, достаточно
+`rtk git diff --check` и проверки ссылок/паттернов. Сборка, тесты приложения
+и переиндексация GitNexus для такой задачи не требуются.
 
-UI ходит в API из `desktop/src/api.ts` (`const API = "http://127.0.0.1:47891"`).
-
----
-
-## Настройка хоста и polkit
-
-`make sync` вызывает `scripts/sync-deps.sh` → `configure-host.sh` → `configure-host-inner.sh`:
-
-1. `setcap cap_net_admin,cap_net_bind_service+ep` на `~/.local/bin/sing-box`
-2. NM drop-in: `interface-name:tun100` (не трогать `tun0`)
-3. Polkit v6: `resolve1` разрешён **только для `tun100`**; для `tun0` — `NO`
-
-Файл правил: `scripts/polkit-vpn-router.rules` (копия в `~/.config/vpn-router/`).
-
-`HostReady()` в `internal/singbox/host_linux.go` — gate перед connect. Без sync личный VPN недоступен, UI показывает баннер.
+Для диагностики действующего экземпляра допустимы прочитанные и проверенные
+обработчики `GET /api/health`, `GET /api/version`, `GET /api/personal-vpn/status`.
+Не считать любой GET безопасным по умолчанию: список подписок может сохранять
+исправленный выбор узла. Не выводить в чат секреты из настроек, подписок и логов.
 
 ---
 
-## Recover сети
+## Архитектура и критичные ограничения
 
-При аварийном падении sing-box маршруты могут «залипнуть»:
+- Tauri + vanilla TypeScript/Vite обращается к Go-демону на `127.0.0.1:47891`.
+  Демон управляет sing-box; Tauri также может запускать/останавливать свой дочерний
+  демон. Запуск второго UI для проверки не считать безопасным по умолчанию.
+- Три пути: `direct` — основной интерфейс; `work` — системный VPN NetworkManager
+  (обычно профиль `PTsecurity`, `tun0`); `personal` — личный VPN через sing-box.
+  Системный VPN подключает и отключает только ОС. API использует `systemVpn`,
+  мигрирует старое `workVpn`; не возвращать `POST /api/work-vpn/*`.
+- `tun100` — постоянно работающий маршрутизатор. Выключение личного VPN отключает
+  его выход `proxy`, но оставляет маршрутизацию. `running` личного VPN и
+  `routingRunning` — разные состояния. `ensureRouter` перезапускает sing-box;
+  connect/disconnect/reapply, смена узла и правки правил могут вызывать его.
+- Coexist при активном системном VPN: `route_address` из двух IPv4 `/1`,
+  `exclude_interface` для системного TUN, outbound `work`, корпоративный DNS
+  `dns-work` и обязательный `hijack-dns`. Не перехватывать системный VPN.
+  Режим меняется и фоновым watcher; `configMode`/`configFileMode`/`configStale`
+  показывают соответствие режима на диске. Stale сам по себе не разрешает reapply.
+- Пользовательские данные: `~/.config/vpn-router/`; основные файлы —
+  `settings.json`, `sing-box.json`, `sing-box.log`, `subscriptions/`.
+  PID демона — `.daemon.pid` в checkout. Не редактировать их ради тестов.
+- `HostReady()` — `internal/singbox/host_setup.go`; проверка NM — `host_linux.go`.
+  NM должен игнорировать только `tun100`, сохраняя управление системным TUN/MFA.
+  Не добавлять широкие polkit-разрешения `set-default-route`.
+- Recover и `vpn-router-netclean` изменяют таблицы/правила маршрутизации хоста.
+  Не запускать их для профилактики, проверки или завершения пробного экземпляра.
 
-```bash
-make recover-network   # scripts/recover-network.sh
-make stop              # тоже гасит sing-box
-```
-
-Логика восстановления default `tun0`: `internal/singbox/recover.go`, вызывается при shutdown демона и disconnect.
-
----
-
-## Типичные симптомы
-
-| Симптом | Вероятная причина | Действие агента |
-|---------|-------------------|-----------------|
-| Личные сайты не работают при системном VPN | Старый `sing-box.json` без coexist | Reapply/connect; проверить grep выше |
-| `127.0.0.1:53 connection refused` в логе | Битый DNS-конфиг | Пересобрать конфиг через connect/reapply |
-| Окна пароля при личном VPN | Старый polkit | `make sync` (v6) |
-| MFA не приходит вне приложения | Широкое polkit `set-default-route` | Удалить; не добавлять обратно |
-| UI «включён», статус «Выключен» | Демон/sing-box упал | `make stop && make dev`, смотреть `sing-box.log` |
+Команды ручного запуска и типовые симптомы описаны в `README.md`.
+Наличие там `make dev`, `make stop`, `make sync` и `make recover-network`
+не отменяет обязательного согласования воздействия на действующее соединение.
 
 ---
 
@@ -158,7 +136,7 @@ make stop              # тоже гасит sing-box
 6. **Polkit/NM:** изменения в `scripts/` требуют bump stamp в `configure-host-inner.sh` (сейчас **v7**: + `vpn-router-netclean` setcap).
 7. **API version:** при ломающих изменениях API — увеличить `apiVersion` в `server.go` и типы в `desktop/src/api.ts`.
 8. Перед рефакторингом — GitNexus `impact` / `context` (см. ниже).
-9. **Линт / CI:** после правок кода агент **обязан** прогнать `make check-fmt`, `make lint`, `make test` (или `make precommit` / `make ci`) и починить падения. Pre-commit: `make hooks`. Workflows: `.github/workflows/{lint,format,test}.yml`; clippy — `lint-rust.yml` при изменениях Tauri. Юнит-тесты: Go — `tests/`; UI — Vitest в `desktop/`. Конфиги: `.golangci.yml`, `desktop/eslint.config.js`, `.editorconfig`.
+9. **Линт / CI:** следовать разделу «Проверки при работающем маршрутизаторе» и `.cursor/rules/quality-gate.mdc`. Workflows: `.github/workflows/{lint,format,test}.yml`; clippy — `lint-rust.yml` при изменениях Tauri. Юнит-тесты: Go — `tests/`; UI — Vitest в `desktop/`. Конфиги: `.golangci.yml`, `desktop/eslint.config.js`, `.editorconfig`.
 10. **Тесты на логику:** любая новая/изменённая ветвящаяся логика должна получить unit-тесты в той же задаче (см. `.cursor/rules/quality-gate.mdc`).
 
 ### Где искать по задаче
@@ -176,130 +154,84 @@ make stop              # тоже гасит sing-box
 
 ---
 
-## GitNexus — навигация по коду
+<!-- gitnexus:start -->
 
-Проект проиндексирован как **vpn-router**. MCP-сервер `user-gitnexus` доступен в Cursor.
+## GitNexus — анализ кода
 
-> Если инструменты предупреждают о stale index: `npx gitnexus analyze` из корня репозитория.
+Имя индекса — **routebox**; `vpn-router` — имя каталога, не имя индекса.
+Перед анализом проверить доступные MCP-инструменты и регистрацию репозитория:
+путь должен совпадать с текущим checkout. Всегда явно указывать `repo: "routebox"`
+или путь текущего репозитория. Не привязываться к имени MCP-сервера конкретной IDE.
+Статистику и свежесть брать из MCP и `.gitnexus/meta.json`, не из чисел в документации.
 
-### Кластеры (функциональные области)
+### Обязательный порядок
 
-| Кластер | Символов | Фокус |
-|---------|----------|-------|
-| Singbox | 42 | Конфиг, TUN, coexist, recover |
-| Nm | 23 | NetworkManager, системный VPN |
-| Api | 11 | HTTP handlers |
-| Config | 8 | settings.json, шифрование |
-| Subscription | 9 | Подписки, парсинг |
-| Network | 6 | Интерфейсы, bind, HTTP client |
+- Для понятий и потоков сначала `query({search_query: "...", repo: "routebox"})`;
+  для именованного символа — `context({name: "...", repo: "routebox"})`.
+  Затем читать актуальный исходник. Текстовый поиск использовать также для
+  литералов, отсутствующих результатов и неподдерживаемых графом связей.
+- До изменения функции, класса или метода выполнить
+  `impact({target: "symbolName", direction: "upstream", repo: "routebox"})`.
+  Сообщить вызывающие места, затронутые процессы и риск. Проверить прямых
+  вызывающих (d=1), протестировать косвенные зависимости (d=2), оценить d=3.
+- При HIGH/CRITICAL предупредить до правки и учесть зависимости в реализации
+  и тестах. `riskSharedAxes` не отменяет предупреждение о риске.
+- UNKNOWN означает неразрешённый анализ. Нулевой список вызывающих не доказывает,
+  что символ не используется: дополнить граф текстовым поиском и чтением кода.
+  Не выдавать неполный анализ за подтверждение безопасности.
+- Переименования выполнять через `rename` с `dry_run: true` и просмотром результата,
+  затем применять согласованное переименование; не заменять его find-and-replace.
+- Перед коммитом правок кода выполнить `detect_changes({scope: "all", repo: "routebox"})`.
+  Для review относительно основной ветки — `scope: "compare", base_ref: "main"`.
+  `partial: true` / `truncated: true` требуют уточнения запроса или повторного
+  анализа; нулевой результат неполного ответа не означает отсутствие влияния.
+- Для security review доступен `explain` при наличии PDG. Отсутствие PDG —
+  ограничение анализа; не включать дополнительную индексацию автоматически.
 
-### Когда использовать
+Предпочитать доступные навыки GitNexus среды. Если их нет в каталоге навыков,
+читать соответствующий `.claude/skills/gitnexus-<task>/SKILL.md`:
+`exploring`, `debugging`, `impact-analysis`, `refactoring`, `pr-review`, `guide`, `cli`.
+Проверять наличие конкретного файла; при отсутствии использовать доступные
+инструменты и сообщать ограничение. MCP предпочтительнее CLI; при отсутствии
+нужной операции допустим локальный runner `node .gitnexus/run.cjs`.
 
-| Ситуация | Инструмент |
-|----------|------------|
-| «Как устроено X?» | `gitnexus_query({query: "..."})` |
-| Контекст символа | `gitnexus_context({name: "WriteConfig"})` |
-| Перед правкой функции | `gitnexus_impact({target: "X", direction: "upstream"})` |
-| Перед коммитом | `gitnexus_detect_changes({scope: "staged"})` |
-| Переименование | `gitnexus_rename({symbol_name, new_name, dry_run: true})` |
+### Свежесть и локальное хранение
 
-### Ресурсы
+- Сравнивать индекс с текущими HEAD, веткой и незакоммиченными правками.
+  При устаревании явно сообщить, какие выводы требуют сверки с исходниками.
+- Для задачи только на чтение, Markdown, правила или `.gitignore` индекс
+  автоматически не перестраивать. Если для безопасной правки нужен актуальный
+  граф, обновление индекса включить в задачу с кодом.
+- После правок кода обновить только локальный индекс из корня проекта:
 
-- `gitnexus://repo/vpn-router/context` — обзор и свежесть индекса
-- `gitnexus://repo/vpn-router/clusters` — модули
-- `gitnexus://repo/vpn-router/processes` — execution flows
-- `gitnexus://repo/vpn-router/process/{name}` — пошаговый трейс
+  ```bash
+  node .gitnexus/run.cjs analyze --index-only
+  ```
 
-### Impact risk
+  Если runner отсутствует, использовать доступный GitNexus CLI с `analyze --index-only`
+  (например, `npx gitnexus analyze --index-only`). До запуска проверить существующие
+  embeddings в `.gitnexus/meta.json`: если их больше нуля, добавить `--embeddings`.
+  Не устанавливать новую версию инструмента без необходимости.
+- `--index-only` сохраняет вручную поддерживаемые инструкции и навыки:
+  не запускать генерацию `AGENTS.md` / `CLAUDE.md` ради обновления графа.
+  После обновления проверить `indexedAt`, `lastCommit`, `stats` и git diff.
+- Индекс, кэши и runner остаются в игнорируемой `.gitnexus/`; не добавлять их в Git.
 
-| Depth | Значение |
-|-------|----------|
-| d=1 | Прямые вызывающие — **обязательно обновить** |
-| d=2 | Косвенные зависимости — протестировать |
-| d=3 | Транзитивные — по критичности пути |
-
-### Skills (в репозитории)
-
-| Задача | Файл |
-|--------|------|
-| Архитектура | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Отладка | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Рефакторинг | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-
-### Обновление индекса
-
-После **завершения задачи с правками кода** агент **обязан** переиндексировать (то же в чеклисте ниже и в `.cursor/rules/quality-gate.mdc`):
-
-```bash
-npx gitnexus analyze               # обычная переиндексация
-npx gitnexus analyze --embeddings  # только если нужны embeddings (иначе сотрутся существующие)
-```
-
-Проверка: `.gitnexus/meta.json` → `stats.nodes`, `indexedAt`.
+Ресурсы: `gitnexus://repo/routebox/context`, `gitnexus://repo/routebox/clusters`,
+`gitnexus://repo/routebox/processes`, `gitnexus://repo/routebox/process/{name}`.
+<!-- gitnexus:end -->
 
 ---
 
-## Чеклист агента перед завершением задачи
+## Чеклист перед завершением
 
-1. Изменения соответствуют трём путям маршрутизации и read-only системному VPN.
-2. Coexist/polkit не сломаны (если трогали `singbox/` или `scripts/`).
-3. Новая/изменённая логика покрыта unit-тестами (Go `tests/` и/или Vitest `desktop/`).
-4. Прогнаны проверки как в CI — **все зелёные** (иначе починить до ответа пользователю):
-
-   ```bash
-   make check-fmt && make lint && make test
-   # или: make precommit / make ci
-   ```
-
-5. При изменениях Go — `make build` проходит.
-6. Для нетривиальных правок — `gitnexus_impact` без игнорирования HIGH/CRITICAL.
-7. Пользователю указаны команды проверки при необходимости (`make dev`, grep конфига, лог).
-8. **GitNexus:** после любых правок кода (не только доков/опечаток) — актуализировать индекс:
-   `npx gitnexus analyze` (если в `.gitnexus/meta.json` уже были embeddings > 0 — с `--embeddings`).
-   Без этого связи/impact/query устареют для следующих сессий.
-
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
-
-This project is indexed by GitNexus as **routebox** (1531 symbols, 5225 relationships, 128 execution flows).
-
-> Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
-
-## Always Do
-
-- **MUST run impact before editing.** Use `impact({target: "symbolName", direction: "upstream"})` or `node .gitnexus/run.cjs impact "symbolName" --direction upstream --repo .`; report callers, processes, and risk. Never substitute grep for graph analysis.
-- **MUST analyze graph changes before committing.** Use `detect_changes({scope: "all"})` (MCP) or `node .gitnexus/run.cjs detect-changes --scope all --repo .` (CLI fallback). `partial: true` or `truncated: true` is not a clean check — a zero means unseen, not unaffected; re-run it. For regression review: `detect_changes({scope: "compare", base_ref: "main"})` or `node .gitnexus/run.cjs detect-changes --scope compare --base-ref "main" --repo .`.
-- MUST warn on HIGH/CRITICAL `risk` pre-edit; never use `riskSharedAxes` to waive a HIGH/CRITICAL `risk` warning. Compare File/symbol: MCP File omits axes; Graph-RAG expands File.
-- **MUST treat `risk: UNKNOWN` as unresolved, not as low.** An empty caller set is not evidence the symbol is unused — it can also mean the callers are not resolvable by the index (plain-object property access, dynamic dispatch, cross-language calls). `impact` pairs `UNKNOWN` with a `riskNote` saying so. Confirm with a text search before treating the symbol as safe to change or delete; do not proceed on the strength of a zero.
-- **MUST use `query({search_query: "concept"})` for concepts/flows, `context({name: "symbolName"})` for a named symbol, or `impact` for blast radius, on read-only callers, dependencies, imports, or execution flow.** Graph first; text search only for empty/`UNKNOWN`/literals.
-- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
-
-## Never Do
-
-- NEVER edit a function, class, or method before MCP/CLI impact analysis.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis, and never read `UNKNOWN` as an all-clear — it means the walk could not answer, which is the one verdict that requires confirming by other means.
-- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit before MCP/CLI graph change analysis.
-
-## Resources
-
-| Resource | Use for |
-| --- | --- |
-| `gitnexus://repo/routebox/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/routebox/clusters` | All functional areas |
-| `gitnexus://repo/routebox/processes` | All execution flows |
-| `gitnexus://repo/routebox/process/{name}` | Step-by-step execution trace |
-
-## CLI
-
-| Task | Read this skill file |
-| --- | --- |
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->
+1. Работа выполнена в фичевой ветке; пользовательские правки сохранены.
+2. Действующий маршрутизатор и хост-настройки не изменены без согласования.
+3. Сохранены три пути маршрутизации, read-only управление системным VPN
+   и необходимые свойства coexist/polkit, если эти области затронуты.
+4. Для правок кода: impact, тесты изменённой логики, проверки как в CI,
+   безопасная сборка при необходимости и обновление локального индекса.
+   Для документации/правил: diff без ошибок и корректные ссылки/паттерны.
+5. Проверен итоговый diff. Пользователю сообщены изменения, выполненные проверки
+   и конкретные ограничения; подготовка правки отделена от её применения.
+6. Commit, push и merge выполнены только при явном поручении пользователя.
