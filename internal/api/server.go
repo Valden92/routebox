@@ -37,7 +37,8 @@ type Server struct {
 	refresh        *refreshScheduler
 	autoMu         sync.Mutex
 	observedHosts  map[string]time.Time
-	autoSelectJobs sync.Map // jobId → *autoSelectJob
+	autoSelectJobs sync.Map   // jobId → *autoSelectJob
+	autoSelectMu   sync.Mutex // probe jobs share ports and a config file
 }
 
 func NewServer(store *config.Store, sb *singbox.Manager) *Server {
@@ -121,6 +122,7 @@ func (s *Server) routes() {
 		r.Post("/{id}/activate", s.activateSubscription)
 		r.Post("/{id}/auto-select", s.autoSelectNode)
 		r.Get("/{id}/auto-select/{jobId}", s.autoSelectNodeStatus)
+		r.Post("/{id}/auto-select/{jobId}/cancel", s.autoSelectNodeCancel)
 		r.Put("/{id}", s.updateSubscription)
 		r.Delete("/{id}", s.deleteSubscription)
 	})
@@ -156,6 +158,7 @@ func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
 			"clash-import",
 			"qr-import",
 			"node-auto-select",
+			"node-auto-select-cancel",
 			"tls-fragment",
 		},
 	})

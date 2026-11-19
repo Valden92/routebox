@@ -159,6 +159,11 @@ func (m *Manager) waitProcess(cmd *exec.Cmd) {
 }
 
 func (m *Manager) Stop() error {
+	return m.stop(CleanupStaleTUNRules)
+}
+
+// stop accepts cleanup separately so lifecycle tests never change host routes.
+func (m *Manager) stop(cleanup func()) error {
 	m.mu.Lock()
 	if !m.running || m.cmd == nil || m.cmd.Process == nil {
 		m.mu.Unlock()
@@ -166,6 +171,7 @@ func (m *Manager) Stop() error {
 	}
 	proc := m.cmd.Process
 	done := m.waitDone
+	probeMode := m.probeMode
 	m.mu.Unlock()
 
 	_ = proc.Signal(syscall.SIGTERM)
@@ -175,9 +181,12 @@ func (m *Manager) Stop() error {
 		_ = proc.Kill()
 		<-done
 	}
-	// Дать ядру/sing-box снять ip rule после close TUN.
-	time.Sleep(500 * time.Millisecond)
-	CleanupStaleTUNRules()
+	if !probeMode {
+		// Только основной маршрутизатор владеет TUN и его ip rule.
+		// Probe использует mixed inbound и не должен очищать общие маршруты.
+		time.Sleep(500 * time.Millisecond)
+		cleanup()
+	}
 
 	m.mu.Lock()
 	m.running = false

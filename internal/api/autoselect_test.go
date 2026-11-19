@@ -28,8 +28,8 @@ func TestResolveAutoSelectNodeLimit(t *testing.T) {
 	if got := resolveAutoSelectNodeLimit(5, 40); got != 5 {
 		t.Fatalf("explicit cap: %d", got)
 	}
-	if got := resolveAutoSelectNodeLimit(0, 10_000); got != autoSelectHardCapNodes {
-		t.Fatalf("hard cap: %d", got)
+	if got := resolveAutoSelectNodeLimit(0, 10_000); got != 10_000 {
+		t.Fatalf("all nodes in a large subscription: %d", got)
 	}
 }
 

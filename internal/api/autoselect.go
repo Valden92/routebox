@@ -26,16 +26,14 @@ import (
 const (
 	autoSelectDefaultSites = "https://www.google.com/generate_204"
 	autoSelectMaxSites     = 5
-	// 0 в запросе = перебрать все узлы. Верхняя страховка от гигантских подписок.
-	autoSelectHardCapNodes  = 500
-	autoSelectOverallBudget = 15 * time.Minute
-	autoSelectSiteTimeout   = 12 * time.Second
-	autoSelectJobTTL        = 30 * time.Minute
+	autoSelectSiteTimeout  = 12 * time.Second
+	// Храним результат после завершения; активный подбор не истекает.
+	autoSelectJobTTL = 30 * time.Minute
 )
 
 type autoSelectReq struct {
 	Sites []string `json:"sites"`
-	// MaxNodes — опциональный потолок; 0/omit = все узлы подписки (до hard cap).
+	// MaxNodes — явный опциональный потолок; 0/omit = все узлы подписки.
 	MaxNodes int `json:"maxNodes"`
 }
 
@@ -58,7 +56,7 @@ type autoSelectStartResp struct {
 type autoSelectJobStatus struct {
 	JobID            string              `json:"jobId"`
 	SubscriptionID   string              `json:"subscriptionId"`
-	Phase            string              `json:"phase"` // pinging|probing|done|error
+	Phase            string              `json:"phase"` // pinging|probing|canceling|canceled|applying|done|error
 	Checked          int                 `json:"checked"`
 	Total            int                 `json:"total"`
 	CurrentName      string              `json:"currentName,omitempty"`
@@ -72,9 +70,71 @@ type autoSelectJobStatus struct {
 }
 
 type autoSelectJob struct {
-	mu        sync.Mutex
-	createdAt time.Time
-	status    autoSelectJobStatus
+	mu         sync.Mutex
+	finishedAt time.Time
+	ctx        context.Context
+	cancel     context.CancelFunc
+	done       chan struct{} // closed after probe cleanup and release of autoSelectMu
+	applying   bool
+	status     autoSelectJobStatus
+}
+
+func newAutoSelectJob(subID string, total int) *autoSelectJob {
+	// Независим от HTTP-запроса и длительности подписки. Таймауты задаются
+	// отдельным ping/API/site-запросам, а не всему перебору.
+	ctx, cancel := context.WithCancel(context.Background())
+	return &autoSelectJob{
+		ctx:    ctx,
+		cancel: cancel,
+		done:   make(chan struct{}),
+		status: autoSelectJobStatus{
+			JobID:          uuid.NewString(),
+			SubscriptionID: subID,
+			Phase:          "pinging",
+			Total:          total,
+			Attempts:       []autoSelectAttempt{},
+		},
+	}
+}
+
+func (j *autoSelectJob) requestCancel() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.status.Finished {
+		return true
+	}
+	// Не прерывать применение: оно может уже менять основной маршрутизатор.
+	if j.applying {
+		return false
+	}
+	j.status.Phase = "canceling"
+	j.cancel()
+	return true
+}
+
+func (j *autoSelectJob) beginApply() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.ctx.Err() != nil || j.status.Finished || j.applying {
+		return false
+	}
+	j.applying = true
+	j.status.Phase = "applying"
+	return true
+}
+
+func (j *autoSelectJob) finishIfCanceled() bool {
+	if j.ctx.Err() == nil {
+		return false
+	}
+	j.patch(func(st *autoSelectJobStatus) {
+		st.Phase = "canceled"
+		st.Finished = true
+		st.Message = fmt.Sprintf("подбор остановлен: проверено %d из %d", st.Checked, st.Total)
+		st.Error = ""
+		st.CurrentName = ""
+	})
+	return true
 }
 
 func (j *autoSelectJob) snapshot() autoSelectJobStatus {
@@ -88,7 +148,17 @@ func (j *autoSelectJob) snapshot() autoSelectJobStatus {
 func (j *autoSelectJob) patch(fn func(*autoSelectJobStatus)) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	wasFinished := j.status.Finished
 	fn(&j.status)
+	if !wasFinished && j.status.Finished {
+		j.finishedAt = time.Now()
+	}
+}
+
+func (j *autoSelectJob) expired(cutoff time.Time) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.status.Finished && !j.finishedAt.IsZero() && j.finishedAt.Before(cutoff)
 }
 
 // NormalizeAutoSelectSites — чистка списка сайтов: trim, https-префикс, дедуп, лимит.
@@ -118,7 +188,7 @@ func NormalizeAutoSelectSites(sites []string) []string {
 	return out
 }
 
-// resolveAutoSelectNodeLimit: maxNodes<=0 → все узлы (с hard cap); иначе min(maxNodes, total, hard cap).
+// resolveAutoSelectNodeLimit: maxNodes<=0 → все узлы; иначе min(maxNodes, total).
 func resolveAutoSelectNodeLimit(maxNodes, total int) int {
 	if total < 0 {
 		total = 0
@@ -126,9 +196,6 @@ func resolveAutoSelectNodeLimit(maxNodes, total int) int {
 	limit := total
 	if maxNodes > 0 && maxNodes < limit {
 		limit = maxNodes
-	}
-	if limit > autoSelectHardCapNodes {
-		limit = autoSelectHardCapNodes
 	}
 	return limit
 }
@@ -150,6 +217,16 @@ func AdjustAutoSelectWeight(weights map[string]int, nodeID string, ok bool) map[
 }
 
 func (s *Server) autoSelectNode(w http.ResponseWriter, r *http.Request) {
+	if !s.autoSelectMu.TryLock() {
+		http.Error(w, "подбор сервера уже выполняется; дождитесь его завершения", http.StatusConflict)
+		return
+	}
+	started := false
+	defer func() {
+		if !started {
+			s.autoSelectMu.Unlock()
+		}
+	}()
 	id := chi.URLParam(r, "id")
 	var req autoSelectReq
 	if r.Body != nil {
@@ -163,19 +240,15 @@ func (s *Server) autoSelectNode(w http.ResponseWriter, r *http.Request) {
 	}
 	sites := NormalizeAutoSelectSites(req.Sites)
 	orderedLimit := resolveAutoSelectNodeLimit(req.MaxNodes, len(nodes))
-	jobID := uuid.NewString()
-	job := &autoSelectJob{
-		createdAt: time.Now(),
-		status: autoSelectJobStatus{
-			JobID:          jobID,
-			SubscriptionID: id,
-			Phase:          "pinging",
-			Total:          orderedLimit,
-			Attempts:       []autoSelectAttempt{},
-		},
-	}
+	job := newAutoSelectJob(id, orderedLimit)
+	jobID := job.status.JobID
 	s.autoSelectJobs.Store(jobID, job)
-	go s.runAutoSelectJob(job, id, nodes, sites, orderedLimit)
+	started = true
+	go func() {
+		defer close(job.done)
+		defer s.autoSelectMu.Unlock()
+		s.runAutoSelectJob(job, id, nodes, sites, orderedLimit)
+	}()
 
 	writeJSON(w, autoSelectStartResp{
 		JobID:          jobID,
@@ -183,6 +256,37 @@ func (s *Server) autoSelectNode(w http.ResponseWriter, r *http.Request) {
 		Total:          orderedLimit,
 		Phase:          "pinging",
 	})
+}
+
+func (s *Server) autoSelectNodeCancel(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.autoSelectJobs.Load(chi.URLParam(r, "jobId"))
+	if !ok {
+		writeAutoSelectJobMissing(w)
+		return
+	}
+	job := v.(*autoSelectJob)
+	if chi.URLParam(r, "id") != job.snapshot().SubscriptionID {
+		writeAutoSelectJobMissing(w)
+		return
+	}
+	if !job.requestCancel() {
+		http.Error(w, "выбранный сервер уже применяется; дождитесь завершения", http.StatusConflict)
+		return
+	}
+	// Ответ означает, что пробный процесс завершён и следующий job может
+	// занять общие порты. Отмена HTTP-запроса не отменяет уже принятую остановку.
+	select {
+	case <-job.done:
+		writeJSON(w, job.snapshot())
+	case <-r.Context().Done():
+		return
+	}
+}
+
+func writeAutoSelectJobMissing(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	writeJSON(w, map[string]string{"code": "auto_select_job_not_found", "message": "job not found"})
 }
 
 func (s *Server) autoSelectNodeStatus(w http.ResponseWriter, r *http.Request) {
@@ -204,9 +308,8 @@ func (s *Server) autoSelectNodeStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subscription.Node, sites []string, orderedLimit int) {
 	defer s.pruneAutoSelectJobs()
-
-	ctx, cancel := context.WithTimeout(context.Background(), autoSelectOverallBudget)
-	defer cancel()
+	defer job.cancel()
+	ctx := job.ctx
 
 	st := s.Store.Get()
 	weights := map[string]int{}
@@ -226,6 +329,9 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 		PreferICMP: s.SingBox.Running(),
 	})
 	pingCancel()
+	if job.finishIfCanceled() {
+		return
+	}
 	byID := make(map[string]ping.Result, len(results))
 	for _, res := range results {
 		byID[res.NodeID] = res
@@ -250,7 +356,14 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 	}
 	probeMgr := singbox.NewManager(st.SingBoxPath, probeCfg)
 	probeMgr.SetProbeMode()
+	defer func() { _ = probeMgr.Stop() }()
+	if job.finishIfCanceled() {
+		return
+	}
 	if err := probeMgr.Start(ctx); err != nil {
+		if job.finishIfCanceled() {
+			return
+		}
 		job.patch(func(st *autoSelectJobStatus) {
 			st.Phase = "error"
 			st.Finished = true
@@ -258,12 +371,17 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 		})
 		return
 	}
-	defer func() { _ = probeMgr.Stop() }()
+	if job.finishIfCanceled() {
+		return
+	}
 
 	waitCtx, waitCancel := context.WithTimeout(ctx, 15*time.Second)
 	err := singbox.WaitClashAPI(waitCtx, singbox.ProbeClashAPIAddr)
 	waitCancel()
 	if err != nil {
+		if job.finishIfCanceled() {
+			return
+		}
 		job.patch(func(st *autoSelectJobStatus) {
 			st.Phase = "error"
 			st.Finished = true
@@ -272,58 +390,30 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 		return
 	}
 
-	var chosen *subscription.Node
-	for i, n := range ordered {
-		if ctx.Err() != nil {
-			break
-		}
-		w := weights[n.ID]
-		job.patch(func(st *autoSelectJobStatus) {
-			st.CurrentName = n.Name
-			st.Checked = i // ещё не завершили этот узел
-		})
-
-		attempt := autoSelectAttempt{NodeID: n.ID, Name: n.Name, Weight: w}
-		if res, ok := byID[n.ID]; ok {
-			attempt.LatencyMs = res.LatencyMs
-		}
+	chosen, scanErr := probeAutoSelectNodes(job, ordered, byID, weights, func(ctx context.Context, i int) (bool, error) {
 		if err := singbox.ClashSelectProxy(ctx, singbox.ProbeClashAPIAddr, "proxy", singbox.ProbeNodeTag(i)); err != nil {
-			attempt.Error = err.Error()
-			weights = AdjustAutoSelectWeight(weights, n.ID, false)
-			attempt.Weight = weights[n.ID]
-			s.persistAutoSelectWeights(subID, weights)
-			job.patch(func(st *autoSelectJobStatus) {
-				st.Attempts = append(st.Attempts, attempt)
-				st.Checked = i + 1
-			})
-			continue
+			return false, err
 		}
 		select {
 		case <-ctx.Done():
+			return false, ctx.Err()
 		case <-time.After(200 * time.Millisecond):
 		}
-		if ctx.Err() != nil {
-			break
-		}
-		ok, siteErr := checkSitesViaProxy(ctx, sites)
-		attempt.OK = ok
-		if siteErr != nil {
-			attempt.Error = siteErr.Error()
-		}
-		weights = AdjustAutoSelectWeight(weights, n.ID, ok)
-		attempt.Weight = weights[n.ID]
-		s.persistAutoSelectWeights(subID, weights)
-		job.patch(func(st *autoSelectJobStatus) {
-			st.Attempts = append(st.Attempts, attempt)
-			st.Checked = i + 1
-		})
-		if ok {
-			nn := n
-			chosen = &nn
-			break
-		}
-	}
+		return checkSitesViaProxy(ctx, sites)
+	}, func(current map[string]int) { s.persistAutoSelectWeights(subID, current) })
 	_ = probeMgr.Stop()
+	if job.finishIfCanceled() {
+		return
+	}
+	if scanErr != nil {
+		job.patch(func(st *autoSelectJobStatus) {
+			st.Phase = "error"
+			st.Finished = true
+			st.Error = fmt.Sprintf("подбор прерван: проверено %d из %d: %v", st.Checked, st.Total, scanErr)
+			st.CurrentName = ""
+		})
+		return
+	}
 
 	if chosen == nil {
 		msg := fmt.Sprintf(
@@ -335,6 +425,12 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 			st.Message = msg
 			st.CurrentName = ""
 		})
+		return
+	}
+	// Отмена и начало применения сериализованы, чтобы закрытие окна не
+	// переключало выбранный узел после принятого запроса остановки.
+	if !job.beginApply() {
+		job.finishIfCanceled()
 		return
 	}
 
@@ -379,6 +475,45 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 	})
 }
 
+// probeAutoSelectNodes перебирает весь список до первого успеха.
+// Подставные tryNode/persist позволяют проверять длинные подписки без сети.
+func probeAutoSelectNodes(job *autoSelectJob, ordered []subscription.Node, byID map[string]ping.Result,
+	weights map[string]int, tryNode func(context.Context, int) (bool, error), persist func(map[string]int),
+) (*subscription.Node, error) {
+	for i, n := range ordered {
+		if err := job.ctx.Err(); err != nil {
+			return nil, err
+		}
+		job.patch(func(st *autoSelectJobStatus) {
+			st.CurrentName = n.Name
+			st.Checked = i
+		})
+		ok, probeErr := tryNode(job.ctx, i)
+		if err := job.ctx.Err(); err != nil {
+			// Отмена задания не означает, что текущий сервер неработоспособен.
+			return nil, err
+		}
+		weights = AdjustAutoSelectWeight(weights, n.ID, ok)
+		attempt := autoSelectAttempt{NodeID: n.ID, Name: n.Name, OK: ok, Weight: weights[n.ID]}
+		if res, exists := byID[n.ID]; exists {
+			attempt.LatencyMs = res.LatencyMs
+		}
+		if probeErr != nil {
+			attempt.Error = probeErr.Error()
+		}
+		persist(weights)
+		job.patch(func(st *autoSelectJobStatus) {
+			st.Attempts = append(st.Attempts, attempt)
+			st.Checked = i + 1
+		})
+		if ok {
+			chosen := n
+			return &chosen, nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *Server) persistAutoSelectWeights(subID string, weights map[string]int) {
 	_ = s.Store.Update(func(cur *config.Settings) {
 		for i := range cur.Subscriptions {
@@ -405,7 +540,7 @@ func (s *Server) pruneAutoSelectJobs() {
 	cutoff := time.Now().Add(-autoSelectJobTTL)
 	s.autoSelectJobs.Range(func(key, value any) bool {
 		job := value.(*autoSelectJob)
-		if job.createdAt.Before(cutoff) {
+		if job.expired(cutoff) {
 			s.autoSelectJobs.Delete(key)
 		}
 		return true
