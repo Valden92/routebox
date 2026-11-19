@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -29,17 +30,28 @@ type encryptedBlob struct {
 	Data    []byte `json:"data"`
 }
 
+// SaveEncrypted enables encryption at rest; the current session stays unlocked.
 func (s *Store) SaveEncrypted(passphrase string) error {
 	if passphrase == "" {
 		return errors.New("passphrase required")
 	}
-	s.mu.RLock()
-	plain, err := json.Marshal(s.settings)
-	s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.encrypted && len(s.key) == 0 {
+		return ErrLocked
+	}
+	salt := make([]byte, saltSize)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return err
+	}
+	key := deriveKey(passphrase, salt)
+	candidate := cloneSettings(s.settings)
+	candidate.Encrypted = true
+	plain, err := json.Marshal(candidate)
 	if err != nil {
 		return err
 	}
-	blob, err := encrypt(plain, passphrase)
+	blob, err := encrypt(plain, key, salt)
 	if err != nil {
 		return err
 	}
@@ -47,20 +59,28 @@ func (s *Store) SaveEncrypted(passphrase string) error {
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	s.settings.Encrypted = true
-	s.mu.Unlock()
-	encPath := s.path + ".enc"
-	if err := os.WriteFile(encPath, out, 0o600); err != nil {
+	if err := writeAtomic(s.path+".enc", out); err != nil {
 		return err
 	}
-	_ = os.Remove(s.path)
-	s.path = encPath
+	// The encrypted file is committed. Keep subsequent saves encrypted even if
+	// removing an old plaintext copy fails; report that failure to the caller.
+	s.settings, s.encrypted, s.key, s.salt = candidate, true, key, salt
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("encrypted settings saved, but removing plaintext failed: %w", err)
+	}
 	return nil
 }
 
 func (s *Store) LoadEncrypted(passphrase string) error {
-	b, err := os.ReadFile(s.path)
+	if passphrase == "" {
+		return errors.New("passphrase required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.encrypted || len(s.key) != 0 {
+		return errors.New("config is not locked")
+	}
+	b, err := os.ReadFile(s.path + ".enc")
 	if err != nil {
 		return err
 	}
@@ -68,39 +88,29 @@ func (s *Store) LoadEncrypted(passphrase string) error {
 	if err = json.Unmarshal(b, &blob); err != nil {
 		return err
 	}
-	plain, err := decrypt(blob, passphrase)
+	if err = validateBlob(blob); err != nil {
+		return err
+	}
+	key := deriveKey(passphrase, blob.Salt)
+	plain, err := decrypt(blob, key)
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var st Settings
-	if err := json.Unmarshal(plain, &st); err != nil {
+	st, err := s.decodeSettings(plain, true)
+	if err != nil {
 		return err
 	}
-	st.DataDir = s.settings.DataDir
-	s.settings = st
+	s.settings, s.key, s.salt = st, key, blob.Salt
 	return nil
 }
 
-func (s *Store) TryLoad() error {
-	if _, err := os.Stat(s.path + ".enc"); err == nil {
-		s.path = s.path + ".enc"
-		return os.ErrNotExist // caller must use unlock endpoint
-	}
-	return s.Load()
-}
+func (s *Store) TryLoad() error { return s.Load() }
 
 func deriveKey(passphrase string, salt []byte) []byte {
 	return pbkdf2.Key([]byte(passphrase), salt, keyIter, keyLen, sha256.New)
 }
 
-func encrypt(plain []byte, passphrase string) (*encryptedBlob, error) {
-	salt := make([]byte, saltSize)
-	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-		return nil, err
-	}
-	key := deriveKey(passphrase, salt)
+func encrypt(plain, key, salt []byte) (*encryptedBlob, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -121,8 +131,10 @@ func encrypt(plain []byte, passphrase string) (*encryptedBlob, error) {
 	}, nil
 }
 
-func decrypt(blob encryptedBlob, passphrase string) ([]byte, error) {
-	key := deriveKey(passphrase, blob.Salt)
+func decrypt(blob encryptedBlob, key []byte) ([]byte, error) {
+	if err := validateBlob(blob); err != nil {
+		return nil, err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -136,6 +148,22 @@ func decrypt(blob encryptedBlob, passphrase string) ([]byte, error) {
 		return nil, errors.New("invalid passphrase or corrupted config")
 	}
 	return plain, nil
+}
+
+func validateBlob(blob encryptedBlob) error {
+	if blob.Version != encVersion {
+		return errors.New("unsupported encrypted config version")
+	}
+	if len(blob.Salt) != saltSize {
+		return errors.New("invalid encrypted config salt")
+	}
+	if len(blob.Nonce) != nonceSize {
+		return errors.New("invalid encrypted config nonce")
+	}
+	if len(blob.Data) < 16 {
+		return errors.New("invalid encrypted config data")
+	}
+	return nil
 }
 
 func (s *Store) Unlock(passphrase string) error {

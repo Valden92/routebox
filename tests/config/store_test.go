@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -103,8 +104,8 @@ func TestStoreLockUnlockRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store2.TryLoad(); !os.IsNotExist(err) {
-		t.Fatalf("TryLoad want ErrNotExist for enc, got %v", err)
+	if err = store2.TryLoad(); !errors.Is(err, config.ErrLocked) {
+		t.Fatalf("TryLoad want ErrLocked for enc, got %v", err)
 	}
 	if err = store2.Unlock(pass); err != nil {
 		t.Fatal(err)
