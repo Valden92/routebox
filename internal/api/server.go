@@ -37,7 +37,8 @@ type Server struct {
 	refresh        *refreshScheduler
 	autoMu         sync.Mutex
 	observedHosts  map[string]time.Time
-	autoSelectJobs sync.Map // jobId → *autoSelectJob
+	autoSelectJobs sync.Map   // jobId → *autoSelectJob
+	autoSelectMu   sync.Mutex // probe jobs share ports and a config file
 }
 
 func NewServer(store *config.Store, sb *singbox.Manager) *Server {

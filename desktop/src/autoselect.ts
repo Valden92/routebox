@@ -72,7 +72,7 @@ export function saveAutoSelectSites(text: string): void {
 }
 
 /** Строка прогресса: «Проверено 3 / 40 · сейчас: NL-1». */
-export function renderAutoSelectProgress(st: AutoSelectJobStatus): string {
+function autoSelectProgressLabel(st: AutoSelectJobStatus): string {
   const total = st.total || 0;
   const checked = st.checked || 0;
   let phase = "Подбор…";
@@ -81,10 +81,39 @@ export function renderAutoSelectProgress(st: AutoSelectJobStatus): string {
   else if (st.phase === "done") phase = "Готово";
   else if (st.phase === "error") phase = "Ошибка";
   const current = st.currentName ? ` · сейчас: ${escapeHtml(st.currentName)}` : "";
+  return `${phase} Проверено <strong>${checked}</strong> / <strong>${total}</strong>${current}`;
+}
+
+export function renderAutoSelectProgress(st: AutoSelectJobStatus): string {
   return `<div class="probe-loading">
     <div class="spinner" aria-hidden="true"></div>
-    <span>${phase} Проверено <strong>${checked}</strong> / <strong>${total}</strong>${current}</span>
+    <span>${autoSelectProgressLabel(st)}</span>
   </div>`;
+}
+
+/** Обновляем подпись, сохраняя DOM-узел спиннера и ход CSS-анимации. */
+export function updateAutoSelectProgress(container: HTMLElement, st: AutoSelectJobStatus): void {
+  const label = container.querySelector<HTMLElement>(".probe-loading > span");
+  if (label) {
+    label.innerHTML = autoSelectProgressLabel(st);
+  } else {
+    container.innerHTML = renderAutoSelectProgress(st);
+  }
+}
+
+/** Ошибка применения важнее успешного выбора узла. */
+export function autoSelectResultToast(res: AutoSelectJobStatus): {
+  message: string;
+  isError: boolean;
+} {
+  if (res.error) return { message: res.error, isError: true };
+  if (res.selectedNodeId) {
+    return {
+      message: `Выбран сервер: ${res.selectedNodeName ?? res.selectedNodeId}`,
+      isError: false,
+    };
+  }
+  return { message: res.message || "Подходящий сервер не найден", isError: true };
 }
 
 /** HTML-сводка результата автовыбора для модалки. */
@@ -105,7 +134,7 @@ export function renderAutoSelectResult(res: AutoSelectJobStatus): string {
 
   const checkedLine = `<p class="muted">Проверено: ${res.checked ?? res.attempts?.length ?? 0} / ${res.total || "—"}</p>`;
 
-  if (res.error && !res.selectedNodeId) {
+  if (res.error) {
     return `<p class="probe-summary err">${escapeHtml(res.error)}</p>${checkedLine}<ul class="probe-list">${rows}</ul>`;
   }
   if (res.selectedNodeId) {

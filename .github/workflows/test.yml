@@ -43,3 +43,7 @@ jobs:
 
       - name: UI unit tests
         run: make test-ui
+
+      - name: UI typecheck
+        working-directory: desktop
+        run: npm run typecheck

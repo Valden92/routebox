@@ -32,11 +32,12 @@ import {
 import { formatPing } from "./ping-label";
 import { orderNodes, retainPingsForNodes } from "./nodes-sort";
 import {
+  autoSelectResultToast,
   initialAutoSelectSitesText,
   parseSitesInput,
-  renderAutoSelectProgress,
   renderAutoSelectResult,
   saveAutoSelectSites,
+  updateAutoSelectProgress,
 } from "./autoselect";
 import {
   filterRules,
@@ -183,7 +184,7 @@ function showProbeLoading(url: string) {
 
 /** Модалка автовыбора: список сайтов → перебор серверов демоном по весу и пингу. */
 function openAutoSelectModal(subId: string, subName: string) {
-  const sitesSeed = initialAutoSelectSitesText(cachedRulesData?.rules ?? []);
+  const sitesSeed = initialAutoSelectSitesText(cachedRulesData?.domains ?? []);
   openModal(
     "Автовыбор сервера",
     `<p class="muted" style="margin:0 0 0.75rem">Подписка «${escapeHtml(subName)}»: сначала серверы с лучшим весом (успех +1 / провал −1), затем по пингу. Можно указать Cursor и др.</p>
@@ -218,7 +219,7 @@ function openAutoSelectModal(subId: string, subName: string) {
         method: "POST",
         body: JSON.stringify({ sites }),
       });
-      resultBox.innerHTML = renderAutoSelectProgress({
+      updateAutoSelectProgress(resultBox, {
         jobId: start.jobId,
         subscriptionId: start.subscriptionId,
         phase: start.phase,
@@ -229,11 +230,8 @@ function openAutoSelectModal(subId: string, subName: string) {
       });
       const final = await pollAutoSelectJob(subId, start.jobId, resultBox);
       resultBox.innerHTML = renderAutoSelectResult(final);
-      if (final.selectedNodeId) {
-        showToast(`Выбран сервер: ${final.selectedNodeName ?? final.selectedNodeId}`);
-      } else {
-        showToast(final.message || final.error || "Подходящий сервер не найден", true);
-      }
+      const toast = autoSelectResultToast(final);
+      showToast(toast.message, toast.isError);
       await refreshStatus();
       await loadSubscriptions();
     } catch (err) {
@@ -256,7 +254,7 @@ async function pollAutoSelectJob(
       `/api/subscriptions/${subId}/auto-select/${encodeURIComponent(jobId)}`,
     );
     if (!st.finished) {
-      resultBox.innerHTML = renderAutoSelectProgress(st);
+      updateAutoSelectProgress(resultBox, st);
       continue;
     }
     return st;

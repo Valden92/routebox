@@ -768,7 +768,13 @@ ul {
   padding: 1rem 0;
 }
 
+.probe-loading > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .spinner {
+  flex-shrink: 0;
   width: 22px;
   height: 22px;
   border: 2px solid var(--border);
