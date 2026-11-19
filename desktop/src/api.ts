@@ -198,6 +198,21 @@ export interface AutoSelectStartResponse {
   phase: string;
 }
 
+/** Уже удалённое завершённое задание не должно блокировать следующий запуск. */
+export async function cancelAutoSelectJob(job: AutoSelectStartResponse): Promise<void> {
+  try {
+    await api<AutoSelectJobStatus>(
+      `/api/subscriptions/${encodeURIComponent(job.subscriptionId)}/auto-select/${encodeURIComponent(job.jobId)}/cancel`,
+      { method: "POST" },
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404 && err.code === "auto_select_job_not_found") {
+      return;
+    }
+    throw err;
+  }
+}
+
 export interface AutoSelectJobStatus {
   jobId: string;
   subscriptionId: string;

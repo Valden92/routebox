@@ -56,7 +56,7 @@ type autoSelectStartResp struct {
 type autoSelectJobStatus struct {
 	JobID            string              `json:"jobId"`
 	SubscriptionID   string              `json:"subscriptionId"`
-	Phase            string              `json:"phase"` // pinging|probing|done|error
+	Phase            string              `json:"phase"` // pinging|probing|canceling|canceled|applying|done|error
 	Checked          int                 `json:"checked"`
 	Total            int                 `json:"total"`
 	CurrentName      string              `json:"currentName,omitempty"`
@@ -74,6 +74,8 @@ type autoSelectJob struct {
 	finishedAt time.Time
 	ctx        context.Context
 	cancel     context.CancelFunc
+	done       chan struct{} // closed after probe cleanup and release of autoSelectMu
+	applying   bool
 	status     autoSelectJobStatus
 }
 
@@ -84,6 +86,7 @@ func newAutoSelectJob(subID string, total int) *autoSelectJob {
 	return &autoSelectJob{
 		ctx:    ctx,
 		cancel: cancel,
+		done:   make(chan struct{}),
 		status: autoSelectJobStatus{
 			JobID:          uuid.NewString(),
 			SubscriptionID: subID,
@@ -92,6 +95,46 @@ func newAutoSelectJob(subID string, total int) *autoSelectJob {
 			Attempts:       []autoSelectAttempt{},
 		},
 	}
+}
+
+func (j *autoSelectJob) requestCancel() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.status.Finished {
+		return true
+	}
+	// Не прерывать применение: оно может уже менять основной маршрутизатор.
+	if j.applying {
+		return false
+	}
+	j.status.Phase = "canceling"
+	j.cancel()
+	return true
+}
+
+func (j *autoSelectJob) beginApply() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.ctx.Err() != nil || j.status.Finished || j.applying {
+		return false
+	}
+	j.applying = true
+	j.status.Phase = "applying"
+	return true
+}
+
+func (j *autoSelectJob) finishIfCanceled() bool {
+	if j.ctx.Err() == nil {
+		return false
+	}
+	j.patch(func(st *autoSelectJobStatus) {
+		st.Phase = "canceled"
+		st.Finished = true
+		st.Message = fmt.Sprintf("подбор остановлен: проверено %d из %d", st.Checked, st.Total)
+		st.Error = ""
+		st.CurrentName = ""
+	})
+	return true
 }
 
 func (j *autoSelectJob) snapshot() autoSelectJobStatus {
@@ -202,6 +245,7 @@ func (s *Server) autoSelectNode(w http.ResponseWriter, r *http.Request) {
 	s.autoSelectJobs.Store(jobID, job)
 	started = true
 	go func() {
+		defer close(job.done)
 		defer s.autoSelectMu.Unlock()
 		s.runAutoSelectJob(job, id, nodes, sites, orderedLimit)
 	}()
@@ -212,6 +256,37 @@ func (s *Server) autoSelectNode(w http.ResponseWriter, r *http.Request) {
 		Total:          orderedLimit,
 		Phase:          "pinging",
 	})
+}
+
+func (s *Server) autoSelectNodeCancel(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.autoSelectJobs.Load(chi.URLParam(r, "jobId"))
+	if !ok {
+		writeAutoSelectJobMissing(w)
+		return
+	}
+	job := v.(*autoSelectJob)
+	if chi.URLParam(r, "id") != job.snapshot().SubscriptionID {
+		writeAutoSelectJobMissing(w)
+		return
+	}
+	if !job.requestCancel() {
+		http.Error(w, "выбранный сервер уже применяется; дождитесь завершения", http.StatusConflict)
+		return
+	}
+	// Ответ означает, что пробный процесс завершён и следующий job может
+	// занять общие порты. Отмена HTTP-запроса не отменяет уже принятую остановку.
+	select {
+	case <-job.done:
+		writeJSON(w, job.snapshot())
+	case <-r.Context().Done():
+		return
+	}
+}
+
+func writeAutoSelectJobMissing(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	writeJSON(w, map[string]string{"code": "auto_select_job_not_found", "message": "job not found"})
 }
 
 func (s *Server) autoSelectNodeStatus(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +329,9 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 		PreferICMP: s.SingBox.Running(),
 	})
 	pingCancel()
+	if job.finishIfCanceled() {
+		return
+	}
 	byID := make(map[string]ping.Result, len(results))
 	for _, res := range results {
 		byID[res.NodeID] = res
@@ -278,7 +356,14 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 	}
 	probeMgr := singbox.NewManager(st.SingBoxPath, probeCfg)
 	probeMgr.SetProbeMode()
+	defer func() { _ = probeMgr.Stop() }()
+	if job.finishIfCanceled() {
+		return
+	}
 	if err := probeMgr.Start(ctx); err != nil {
+		if job.finishIfCanceled() {
+			return
+		}
 		job.patch(func(st *autoSelectJobStatus) {
 			st.Phase = "error"
 			st.Finished = true
@@ -286,12 +371,17 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 		})
 		return
 	}
-	defer func() { _ = probeMgr.Stop() }()
+	if job.finishIfCanceled() {
+		return
+	}
 
 	waitCtx, waitCancel := context.WithTimeout(ctx, 15*time.Second)
 	err := singbox.WaitClashAPI(waitCtx, singbox.ProbeClashAPIAddr)
 	waitCancel()
 	if err != nil {
+		if job.finishIfCanceled() {
+			return
+		}
 		job.patch(func(st *autoSelectJobStatus) {
 			st.Phase = "error"
 			st.Finished = true
@@ -312,6 +402,9 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 		return checkSitesViaProxy(ctx, sites)
 	}, func(current map[string]int) { s.persistAutoSelectWeights(subID, current) })
 	_ = probeMgr.Stop()
+	if job.finishIfCanceled() {
+		return
+	}
 	if scanErr != nil {
 		job.patch(func(st *autoSelectJobStatus) {
 			st.Phase = "error"
@@ -332,6 +425,12 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 			st.Message = msg
 			st.CurrentName = ""
 		})
+		return
+	}
+	// Отмена и начало применения сериализованы, чтобы закрытие окна не
+	// переключало выбранный узел после принятого запроса остановки.
+	if !job.beginApply() {
+		job.finishIfCanceled()
 		return
 	}
 

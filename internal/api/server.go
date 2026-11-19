@@ -122,6 +122,7 @@ func (s *Server) routes() {
 		r.Post("/{id}/activate", s.activateSubscription)
 		r.Post("/{id}/auto-select", s.autoSelectNode)
 		r.Get("/{id}/auto-select/{jobId}", s.autoSelectNodeStatus)
+		r.Post("/{id}/auto-select/{jobId}/cancel", s.autoSelectNodeCancel)
 		r.Put("/{id}", s.updateSubscription)
 		r.Delete("/{id}", s.deleteSubscription)
 	})
@@ -157,6 +158,7 @@ func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
 			"clash-import",
 			"qr-import",
 			"node-auto-select",
+			"node-auto-select-cancel",
 			"tls-fragment",
 		},
 	})

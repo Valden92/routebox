@@ -1,6 +1,7 @@
 import {
   api,
   ApiError,
+  cancelAutoSelectJob,
   type AutoCheckResponse,
   type AutoSelectJobStatus,
   type AutoSelectStartResponse,
@@ -30,6 +31,8 @@ import {
   readImageFromClipboard,
 } from "./qr-import";
 import { formatPing } from "./ping-label";
+import { AutoSelectSession } from "./autoselect-session";
+import { ModalLifecycle } from "./modal-lifecycle";
 import { orderNodes, retainPingsForNodes } from "./nodes-sort";
 import {
   autoSelectResultToast,
@@ -112,7 +115,11 @@ function hidePersonalSetupBanner() {
   el("#personal-setup-banner").classList.add("hidden");
 }
 
-function openModal(title: string, bodyHtml: string) {
+const modalLifecycle = new ModalLifecycle();
+let activeAutoSelectSession: AutoSelectSession | null = null;
+
+function openModal(title: string, bodyHtml: string, onClose?: () => void) {
+  modalLifecycle.replace(onClose);
   el("#modal-title").textContent = title;
   el("#modal-body").innerHTML = bodyHtml;
   const overlay = el("#modal-overlay");
@@ -121,6 +128,7 @@ function openModal(title: string, bodyHtml: string) {
 }
 
 function closeModal() {
+  modalLifecycle.close();
   const overlay = el("#modal-overlay");
   overlay.classList.remove("is-open");
   overlay.setAttribute("aria-hidden", "true");
@@ -184,6 +192,7 @@ function showProbeLoading(url: string) {
 
 /** Модалка автовыбора: список сайтов → перебор серверов демоном по весу и пингу. */
 function openAutoSelectModal(subId: string, subName: string) {
+  let session: AutoSelectSession | null = null;
   const sitesSeed = initialAutoSelectSitesText(cachedRulesData?.domains ?? []);
   openModal(
     "Автовыбор сервера",
@@ -196,6 +205,11 @@ function openAutoSelectModal(subId: string, subName: string) {
        <button type="submit" id="btn-autoselect-run">Начать подбор</button>
      </form>
      <div id="autoselect-result"></div>`,
+    () => {
+      void session?.close().catch((err) => {
+        showToast(err instanceof Error ? err.message : "Не удалось остановить подбор", true);
+      });
+    },
   );
   el("#form-autoselect").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -207,6 +221,9 @@ function openAutoSelectModal(subId: string, subName: string) {
       return;
     }
     saveAutoSelectSites(sitesText);
+    const run = new AutoSelectSession(activeAutoSelectSession, cancelAutoSelectJob);
+    session = run;
+    activeAutoSelectSession = run;
     btn.disabled = true;
     const resultBox = el("#autoselect-result");
     resultBox.innerHTML = `
@@ -215,10 +232,13 @@ function openAutoSelectModal(subId: string, subName: string) {
         <span>Запуск подбора…</span>
       </div>`;
     try {
-      const start = await api<AutoSelectStartResponse>(`/api/subscriptions/${subId}/auto-select`, {
-        method: "POST",
-        body: JSON.stringify({ sites }),
-      });
+      const start = await run.start(() =>
+        api<AutoSelectStartResponse>(`/api/subscriptions/${subId}/auto-select`, {
+          method: "POST",
+          body: JSON.stringify({ sites }),
+        }),
+      );
+      if (!start || run.closed) return;
       updateAutoSelectProgress(resultBox, {
         jobId: start.jobId,
         subscriptionId: start.subscriptionId,
@@ -228,13 +248,15 @@ function openAutoSelectModal(subId: string, subName: string) {
         attempts: [],
         finished: false,
       });
-      const final = await pollAutoSelectJob(subId, start.jobId, resultBox);
+      const final = await pollAutoSelectJob(subId, start.jobId, resultBox, run.signal);
+      if (run.closed) return;
       resultBox.innerHTML = renderAutoSelectResult(final);
       const toast = autoSelectResultToast(final);
       showToast(toast.message, toast.isError);
       await refreshStatus();
       await loadSubscriptions();
     } catch (err) {
+      if (run.closed) return;
       resultBox.innerHTML = "";
       showToast(err instanceof Error ? err.message : "Ошибка автовыбора", true);
     } finally {
@@ -247,12 +269,16 @@ async function pollAutoSelectJob(
   subId: string,
   jobId: string,
   resultBox: HTMLElement,
+  signal: AbortSignal,
 ): Promise<AutoSelectJobStatus> {
   for (;;) {
     await new Promise((r) => window.setTimeout(r, 450));
+    signal.throwIfAborted();
     const st = await api<AutoSelectJobStatus>(
       `/api/subscriptions/${subId}/auto-select/${encodeURIComponent(jobId)}`,
+      { signal },
     );
+    signal.throwIfAborted();
     if (!st.finished) {
       updateAutoSelectProgress(resultBox, st);
       continue;
