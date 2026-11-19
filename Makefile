@@ -20,6 +20,28 @@ SYNC_SCRIPT  := $(ROOT)/scripts/sync-deps.sh
 
 .DEFAULT_GOAL := dev
 
+# Dev checkout shares the host network even when its source tree is separate.
+DEV_CHECKOUT := $(shell git -C "$(ROOT)" config --bool vpnrouter.development 2>/dev/null)
+NETWORK_GOALS := all dev run dev-full daemon daemon-fg desktop stop restart sync \
+	deps deps-apt sync-go sync-node sync-rust install-sing-box setcap-sing-box configure-host \
+	reset-host reset-host-wipe recover-network
+ifeq ($(DEV_CHECKOUT),true)
+ifneq ($(ALLOW_HOST_NETWORK),1)
+ifneq ($(filter $(NETWORK_GOALS),$(if $(MAKECMDGOALS),$(MAKECMDGOALS),dev)),)
+$(error DEV checkout: управление сетью заблокировано; ручная проверка владельцем — ALLOW_HOST_NETWORK=1)
+endif
+endif
+endif
+
+.PHONY: dev-prepare test-development
+DEV_ROOT ?= $(ROOT)/.tmp/development
+
+dev-prepare:
+	node $(ROOT)/scripts/development-checkout.mjs "$(DEV_ROOT)"
+
+test-development:
+	node --test $(ROOT)/scripts/development-checkout.test.mjs
+
 all: dev
 
 .PHONY: build sidecar
@@ -111,7 +133,7 @@ lint-tools:
 
 lint: lint-go lint-ui
 
-test: test-go test-ui
+test: test-go test-ui test-development
 
 test-go:
 	cd $(ROOT) && $(GO) test ./tests/... ./internal/...
@@ -169,6 +191,7 @@ help:
 	@echo "  make hooks    — включить git pre-commit (формат + линт + тесты)"
 	@echo "  make precommit — check-fmt + lint + test (как хук / CI)"
 	@echo "  make ci       — алиас make precommit"
+	@echo "  make dev-prepare — отдельный dev-checkout в .tmp/development (текущая ветка, только HEAD)"
 	@echo "  make dev      — сборка + демон + Tauri (личный VPN без пароля в UI)"
 	@echo "  make dev-full — sync + dev (рекомендуется новому пользователю)"
 	@echo "  make daemon   — только API http://$(API_ADDR)"
