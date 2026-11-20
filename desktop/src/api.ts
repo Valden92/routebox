@@ -114,6 +114,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export type RoutePath = "direct" | "work" | "personal";
 
+export interface AutoRoutingSettings {
+  autoDetectRouting: boolean;
+}
+
 export interface StatusResponse {
   internet: {
     up: boolean;

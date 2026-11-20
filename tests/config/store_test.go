@@ -16,9 +16,6 @@ func TestDefaultSettings(t *testing.T) {
 	if st.DataDir != dir {
 		t.Fatalf("DataDir %q", st.DataDir)
 	}
-	if st.DefaultPath != config.RoutePersonal {
-		t.Fatalf("DefaultPath %s", st.DefaultPath)
-	}
 	if st.SingBoxConfigPath != filepath.Join(dir, "sing-box.json") {
 		t.Fatalf("SingBoxConfigPath %s", st.SingBoxConfigPath)
 	}

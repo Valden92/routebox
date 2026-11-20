@@ -106,10 +106,11 @@ describe("personalStatusFlags", () => {
 });
 
 describe("isDaemonApiOutdated", () => {
-  it("requires apiVersion >= 6", () => {
+  it("requires apiVersion >= 7", () => {
     expect(isDaemonApiOutdated(undefined)).toBe(true);
     expect(isDaemonApiOutdated(4)).toBe(true);
     expect(isDaemonApiOutdated(5)).toBe(true);
-    expect(isDaemonApiOutdated(6)).toBe(false);
+    expect(isDaemonApiOutdated(6)).toBe(true);
+    expect(isDaemonApiOutdated(7)).toBe(false);
   });
 });

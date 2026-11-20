@@ -43,7 +43,7 @@
 - **Polkit/NM:** изменения в `scripts/` требуют bump stamp в `configure-host-inner.sh` (сейчас **v7**: + `vpn-router-netclean` setcap).
 - **API version:** при ломающих изменениях API — увеличить `apiVersion` в `server.go` и типы в `desktop/src/api.ts`.
 
-API v6: производственный HTTP-обработчик в `cmd/daemon/main.go` обязательно
+API v7: производственный HTTP-обработчик в `cmd/daemon/main.go` обязательно
 обёрнут в `LocalAccess.Handler` (loopback, Origin/Host, Bearer-токен). Не публиковать
 роутер в обход этой границы. `NewTestServer` создаёт обработчики без фоновых задач
 для компонентных тестов; тесты защиты отдельно оборачивают его тем же `LocalAccess`.

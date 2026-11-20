@@ -106,7 +106,6 @@ type Settings struct {
 	Subscriptions     []Subscription `json:"subscriptions"`
 	DomainRules       []DomainRule   `json:"domainRules"`
 	AppRules          []AppRule      `json:"appRules"`
-	DefaultPath       RoutePath      `json:"defaultPath"`
 	AutoDetectRouting bool           `json:"autoDetectRouting"`
 	SingBoxPath       string         `json:"singBoxPath"`
 	SingBoxConfigPath string         `json:"singBoxConfigPath"`
@@ -128,7 +127,6 @@ func DefaultSettings(dataDir string) Settings {
 		DataDir:           dataDir,
 		MainInterface:     "wlp0s20f3",
 		APIListen:         "127.0.0.1:47891",
-		DefaultPath:       RoutePersonal,
 		AutoDetectRouting: true,
 		SystemVPN: SystemVPN{
 			NMConnectionID: "PTsecurity",
@@ -275,8 +273,10 @@ func (s *Store) Load() error {
 }
 
 // decodeSettings is shared by plaintext and encrypted loads (caller holds mu).
+// Legacy defaultPath is ignored and disappears on the next save: the effective
+// fallback has always been direct, so loading old settings must not change it.
 func (s *Store) decodeSettings(b []byte, encrypted bool) (Settings, error) {
-	var st Settings
+	st := Settings{AutoDetectRouting: true}
 	if err := json.Unmarshal(b, &st); err != nil {
 		return Settings{}, err
 	}
