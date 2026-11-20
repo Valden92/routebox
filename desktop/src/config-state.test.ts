@@ -17,6 +17,11 @@ function state(overrides: Partial<RouterConfigurationState> = {}): RouterConfigu
 }
 
 describe("router configuration diagnostics", () => {
+  it("distinguishes a checked unchanged config from a restarted one", () => {
+    const html = renderConfigurationState(state({ unchanged: true }));
+    expect(html).toContain("Конфигурация не изменилась — перезапуск не потребовался");
+    expect(html).not.toContain("Последнее применение успешно");
+  });
   it("supports an older daemon without the added optional state", () => {
     expect(renderConfigurationState()).toBe("");
   });

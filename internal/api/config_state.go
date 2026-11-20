@@ -33,6 +33,7 @@ type routerConfigurationState struct {
 	Error                 string     `json:"error,omitempty"`
 	Running               bool       `json:"running"`
 	MatchesSavedSettings  *bool      `json:"matchesSavedSettings,omitempty"`
+	Unchanged             bool       `json:"unchanged,omitempty"`
 }
 
 type configApplyTracker struct {
@@ -57,14 +58,19 @@ func configVersion(body []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (t *configApplyTracker) apply(ctx context.Context, st config.Settings, path, reason string, prepare func(string) error, runtime routerRuntime) error {
+func (t *configApplyTracker) apply(ctx context.Context, st config.Settings, path, reason string, prepare func(string) error, runtime routerRuntime) (bool, error) {
 	t.mu.Lock()
+	confirmedVersion := t.state.AppliedVersion
 	t.state.Attempt++
 	now := time.Now()
 	t.state.Phase, t.state.Reason = "preparing", reason
 	t.state.DesiredVersion, t.state.Rollback, t.state.Error = "", "", ""
+	t.state.Unchanged = false
 	t.state.StartedAt, t.state.CompletedAt = &now, nil
 	t.mu.Unlock()
+	runtime.reuse = func(body []byte) bool {
+		return reason != "manual_reapply" && confirmedVersion != "" && configVersion(body) == confirmedVersion
+	}
 	runtime.progress = func(phase string) {
 		t.mu.Lock()
 		t.state.Phase = phase
@@ -81,7 +87,10 @@ func (t *configApplyTracker) apply(ctx context.Context, st config.Settings, path
 		return prepareErr
 	}, runtime)
 	t.finish(err, routingSettingsKey(st))
-	return err
+	if errors.Is(err, errConfigUnchanged) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (t *configApplyTracker) finish(err error, key [32]byte) {
@@ -89,6 +98,11 @@ func (t *configApplyTracker) finish(err error, key [32]byte) {
 	defer t.mu.Unlock()
 	now := time.Now()
 	t.state.CompletedAt = &now
+	if errors.Is(err, errConfigUnchanged) {
+		t.state.Phase, t.state.Unchanged = "applied", true
+		t.appliedKey, t.settingsKnown = key, true
+		return
+	}
 	if err == nil {
 		t.state.Phase = "applied"
 		t.state.AppliedVersion = t.state.DesiredVersion

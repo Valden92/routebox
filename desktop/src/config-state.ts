@@ -34,7 +34,9 @@ export function renderConfigurationState(
   expanded = false,
 ): string {
   if (!state) return "";
-  const status = phases[state.phase] ?? phases.unknown;
+  const status = state.unchanged
+    ? "Конфигурация не изменилась — перезапуск не потребовался"
+    : (phases[state.phase] ?? phases.unknown);
   const pending = state.matchesSavedSettings === false;
   const failed = ["rejected", "rolled_back", "rollback_failed", "failed"].includes(state.phase);
   const tone = failed || pending ? "err" : "muted";

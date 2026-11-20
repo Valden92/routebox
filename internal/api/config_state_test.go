@@ -20,7 +20,7 @@ func applyStateFixture(t *testing.T) (*rollbackFixture, *configApplyTracker, con
 	f := newRollbackFixture(t, false, false)
 	tracker := &configApplyTracker{}
 	st := config.DefaultSettings(t.TempDir())
-	if err := tracker.apply(context.Background(), st, f.path, "startup", prepareRollbackFixture, f.runtime); err != nil {
+	if _, err := tracker.apply(context.Background(), st, f.path, "startup", prepareRollbackFixture, f.runtime); err != nil {
 		t.Fatal(err)
 	}
 	return f, tracker, st
@@ -69,7 +69,7 @@ func TestConfigStateDistinguishesRejectionAndRecovery(t *testing.T) {
 				f.stopErrors[1] = failure
 			}
 			st.MainInterface = "changed-main"
-			err := tracker.apply(context.Background(), st, f.path, "rules_changed", prepare, f.runtime)
+			_, err := tracker.apply(context.Background(), st, f.path, "rules_changed", prepare, f.runtime)
 			if !errors.Is(err, failure) {
 				t.Fatalf("original error chain lost: %v", err)
 			}
@@ -104,7 +104,7 @@ func TestConfigStateFirstFailureDoesNotInventAppliedVersion(t *testing.T) {
 	f.startErrors[1] = errors.New("fixture start failure")
 	var tracker configApplyTracker
 	st := config.DefaultSettings(t.TempDir())
-	err := tracker.apply(context.Background(), st, f.path, "startup", prepareRollbackFixture, f.runtime)
+	_, err := tracker.apply(context.Background(), st, f.path, "startup", prepareRollbackFixture, f.runtime)
 	state := tracker.snapshot(st, f.alive)
 	if err == nil || state.Phase != "failed" || state.Rollback != "file_restored" || state.AppliedVersion != "" || state.LastSuccessfulVersion != "" {
 		t.Fatalf("invented working config: %+v, %v", state, err)
@@ -120,7 +120,7 @@ func TestRollbackOfUntrackedVersionDoesNotGuessItsSettings(t *testing.T) {
 	if initial.Phase != "unknown" || initial.AppliedVersion != "" || initial.MatchesSavedSettings != nil {
 		t.Fatal("existing process was assumed to use saved settings")
 	}
-	if err := tracker.apply(context.Background(), st, f.path, "manual_reapply", prepareRollbackFixture, f.runtime); err == nil {
+	if _, err := tracker.apply(context.Background(), st, f.path, "manual_reapply", prepareRollbackFixture, f.runtime); err == nil {
 		t.Fatal("candidate unexpectedly succeeded")
 	}
 	state := tracker.snapshot(st, f.alive)
@@ -138,7 +138,8 @@ func TestConfigStateNeverConfirmsCandidateBeforeReadiness(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- tracker.apply(context.Background(), st, f.path, "manual_reapply", prepareRollbackFixture, f.runtime)
+		_, err := tracker.apply(context.Background(), st, f.path, "manual_reapply", prepareRollbackFixture, f.runtime)
+		done <- err
 	}()
 	select {
 	case <-started:

@@ -141,6 +141,7 @@ export interface RouterConfigurationState {
   error?: string;
   running: boolean;
   matchesSavedSettings?: boolean;
+  unchanged?: boolean;
 }
 
 export interface StatusResponse {

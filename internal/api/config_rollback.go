@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,7 +17,11 @@ type routerRuntime struct {
 	start    func(context.Context) error
 	ready    func(context.Context) error
 	progress func(string)
+	reuse    func([]byte) bool
 }
+
+// Internal outcome, handled by the tracker; never returned as an API failure.
+var errConfigUnchanged = errors.New("configuration already running")
 
 func applyRouterConfig(ctx context.Context, path string, prepare func(string) error, runtime routerRuntime) error {
 	if err := ctx.Err(); err != nil {
@@ -34,6 +39,24 @@ func applyRouterConfig(ctx context.Context, path string, prepare func(string) er
 	return applyCandidateConfig(ctx, path, func(candidate string) error {
 		if err := prepare(candidate); err != nil {
 			return err
+		}
+		if wasRunning && runtime.reuse != nil {
+			body, readErr := os.ReadFile(candidate)
+			if readErr != nil {
+				return readErr
+			}
+			if bytes.Equal(body, previous) && runtime.reuse(body) {
+				readyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				readyErr := runtime.ready(readyCtx)
+				cancel()
+				current, currentErr := os.ReadFile(path)
+				if readyErr == nil && runtime.running() && currentErr == nil && bytes.Equal(current, body) {
+					return errConfigUnchanged
+				}
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
 		}
 		if wasRunning {
 			return writePrivateConfig(path+".previous-working", previous)

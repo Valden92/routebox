@@ -38,6 +38,7 @@ type Server struct {
 	Store             *config.Store
 	SingBox           *singbox.Manager
 	configApply       configApplyTracker
+	ruleApplies       ruleApplyBatcher
 	router            chi.Router
 	refresh           *refreshScheduler
 	autoMu            sync.Mutex
@@ -417,15 +418,23 @@ func (s *Server) personalReapply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ensureRouter(ctx context.Context) error {
+	_, err := s.ensureRouterResult(ctx)
+	return err
+}
+
+func (s *Server) ensureRouterResult(ctx context.Context) (bool, error) {
 	s.autoMu.Lock()
 	defer s.autoMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	return s.ensureRouterLocked(ctx)
 }
 
-func (s *Server) ensureRouterLocked(ctx context.Context) error {
+func (s *Server) ensureRouterLocked(ctx context.Context) (bool, error) {
 	st := s.Store.Get()
 	if !singbox.HostReady(st.SingBoxPath) {
-		return fmt.Errorf("host_not_ready: выполните make sync")
+		return false, fmt.Errorf("host_not_ready: выполните make sync")
 	}
 	var node *subscription.Node
 	if n, err := s.selectedNode(st); err == nil {
@@ -443,7 +452,7 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 	log.Printf("ensureRouter: personalEnabled=%v sysVPN=%v wasRunning=%v node=%q proto=%s",
 		st.PersonalVPN.Enabled, snapshot.SystemVPNUp, s.SingBox.Running(), nodeName, nodeProto)
 	runtimeTouched := false
-	err := s.configApply.apply(ctx, st, st.SingBoxConfigPath, configurationApplyReason(ctx), func(candidate string) error {
+	reapplied, err := s.configApply.apply(ctx, st, st.SingBoxConfigPath, configurationApplyReason(ctx), func(candidate string) error {
 		if err := singbox.WriteRouterConfigWithSnapshot(candidate, node, st, "tun100", snapshot); err != nil {
 			return err
 		}
@@ -475,10 +484,10 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 		if runtimeTouched && !s.SingBox.Running() {
 			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
 		}
-		return err
+		return false, err
 	}
 	log.Printf("ensureRouter: ok sysVPN=%v", snapshot.SystemVPNUp)
-	return nil
+	return reapplied, nil
 }
 
 func (s *Server) personalDisconnect(w http.ResponseWriter, r *http.Request) {
@@ -1335,7 +1344,10 @@ func (s *Server) reapplyPersonalIfRunning(ctx context.Context) (bool, error) {
 	if !s.SingBox.Running() {
 		return false, nil
 	}
-	return true, s.ensureRouter(ctx)
+	reason := configurationApplyReason(ctx)
+	return s.ruleApplies.request(ctx, func(shared context.Context) (bool, error) {
+		return s.applyRuleBatch(shared, reason)
+	})
 }
 
 var errEmptyHost = errors.New("empty host")
