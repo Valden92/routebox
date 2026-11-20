@@ -2,8 +2,10 @@ package subscription
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,27 +20,43 @@ type FetchResult struct {
 }
 
 func Fetch(ctx context.Context, subURL string) (FetchResult, error) {
-	if !IsRemoteURL(subURL) {
-		return FetchResult{}, fmt.Errorf("нет HTTP(S) URL для обновления")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subURL, nil)
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	client := newFetchClient(net.DefaultResolver.LookupNetIP, dialer.DialContext)
+	defer client.CloseIdleConnections()
+	return fetchWithClient(ctx, subURL, client)
+}
+
+func fetchWithClient(ctx context.Context, subURL string, client *http.Client) (FetchResult, error) {
+	u, err := parseFetchURL(subURL)
 	if err != nil {
 		return FetchResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return FetchResult{}, errors.New("не удалось создать запрос подписки")
+	}
+	if u.User != nil {
+		password, _ := u.User.Password()
+		req.SetBasicAuth(u.User.Username(), password)
+		req.URL.User = nil
 	}
 	// Многие провайдеры (quattro-cloud и др.) отдают HTML без клиентского UA
 	req.Header.Set("User-Agent", "v2rayN/6.42.0")
 	req.Header.Set("Accept", "*/*")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return FetchResult{}, err
+		return FetchResult{}, safeFetchError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return FetchResult{}, fmt.Errorf("subscription HTTP %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSubscriptionBytes+1))
 	if err != nil {
-		return FetchResult{}, err
+		return FetchResult{}, safeFetchError(err)
+	}
+	if len(body) > maxSubscriptionBytes {
+		return FetchResult{}, fmt.Errorf("подписка превышает допустимый размер 8 МиБ")
 	}
 	return FetchResult{Body: body, Meta: MetaFromHeaders(resp.Header)}, nil
 }
