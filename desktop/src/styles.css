@@ -46,8 +46,8 @@ body {
 .router-configuration > summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  justify-content: flex-start;
+  gap: 0.6rem;
   min-height: 38px;
   cursor: pointer;
   padding: 0.55rem 0.65rem;
@@ -69,12 +69,11 @@ body {
   content: "";
 }
 
-.router-configuration > summary::after {
+.router-configuration > summary::before {
   content: "";
   flex: 0 0 6px;
   width: 6px;
   height: 6px;
-  margin-right: 3px;
   border-right: 1.5px solid currentColor;
   border-bottom: 1.5px solid currentColor;
   opacity: 0.7;
@@ -82,7 +81,7 @@ body {
   transition: transform 160ms ease;
 }
 
-.router-configuration[open] > summary::after {
+.router-configuration[open] > summary::before {
   transform: rotate(45deg);
 }
 
@@ -99,7 +98,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .router-configuration > summary,
-  .router-configuration > summary::after {
+  .router-configuration > summary::before {
     transition: none;
   }
 }
