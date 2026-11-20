@@ -33,6 +33,7 @@ type routerConfigurationState struct {
 	Error                 string     `json:"error,omitempty"`
 	Running               bool       `json:"running"`
 	MatchesSavedSettings  *bool      `json:"matchesSavedSettings,omitempty"`
+	PublishedRulesVersion string     `json:"publishedRulesVersion,omitempty"`
 	Unchanged             bool       `json:"unchanged,omitempty"`
 }
 
@@ -104,6 +105,7 @@ func (t *configApplyTracker) finish(err error, key [32]byte) {
 		return
 	}
 	if err == nil {
+		t.state.PublishedRulesVersion = ""
 		t.state.Phase = "applied"
 		t.state.AppliedVersion = t.state.DesiredVersion
 		if t.state.AppliedVersion != "" {

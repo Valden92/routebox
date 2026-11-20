@@ -6,6 +6,7 @@ const phases: Record<RouterConfigurationState["phase"], string> = {
   preparing: "Подготовка и проверка новой конфигурации",
   applying: "Применение и проверка готовности",
   applied: "Последнее применение успешно",
+  rules_published: "Правила обновлены без перезапуска VPN",
   rejected: "Новая конфигурация отклонена",
   rolling_back: "Восстановление предыдущей версии",
   rolled_back: "Предыдущая рабочая версия восстановлена",
@@ -52,10 +53,11 @@ export function renderConfigurationState(
     <dl>
       <dt>Работающая версия</dt><dd>${state.running ? version(state.appliedVersion) : "Маршрутизатор выключен"}</dd>
       <dt>Последний кандидат</dt><dd>${version(state.desiredVersion)}</dd>
+      ${state.publishedRulesVersion ? `<dt>Опубликованные правила</dt><dd>${version(state.publishedRulesVersion)}</dd>` : ""}
       <dt>Последняя рабочая</dt><dd>${version(state.lastSuccessfulVersion)}</dd>
       ${state.reason ? `<dt>Причина применения</dt><dd>${escapeHtml(reasons[state.reason] ?? "Изменение конфигурации")}</dd>` : ""}
     </dl>
-    <p class="${pending ? "err" : "muted"}">${saved}</p>
+    <p class="${pending ? "err" : "muted"}">${state.phase === "rules_published" ? "sing-box подхватывает правила автоматически. Подтверждение загрузки от ядра недоступно. Уже открытые соединения сохраняют свой маршрут; новые используют обновлённые правила." : saved}</p>
     ${state.error ? `<p class="err">${escapeHtml(state.error)}</p>` : ""}
   </details>`;
 }

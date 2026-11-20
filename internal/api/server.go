@@ -42,6 +42,7 @@ type Server struct {
 	router            chi.Router
 	refresh           *refreshScheduler
 	autoMu            sync.Mutex
+	liveRules         *liveRouterRules
 	observedHosts     map[string]time.Time
 	autoSelectJobs    sync.Map   // jobId → *autoSelectJob
 	autoSelectMu      sync.Mutex // probe jobs share ports and a config file
@@ -452,9 +453,20 @@ func (s *Server) ensureRouterLocked(ctx context.Context) (bool, error) {
 	log.Printf("ensureRouter: personalEnabled=%v sysVPN=%v wasRunning=%v node=%q proto=%s",
 		st.PersonalVPN.Enabled, snapshot.SystemVPNUp, s.SingBox.Running(), nodeName, nodeProto)
 	runtimeTouched := false
+	var preparedRules *liveRouterRules
+	activatedRules := false
+	defer func() {
+		// A failed startup/rollback may leave the candidate process alive.
+		// Keep its files whenever runtime replacement has begun.
+		if preparedRules != nil && !activatedRules && !runtimeTouched {
+			_ = os.RemoveAll(preparedRules.dir)
+		}
+	}()
 	reapplied, err := s.configApply.apply(ctx, st, st.SingBoxConfigPath, configurationApplyReason(ctx), func(candidate string) error {
-		if err := singbox.WriteRouterConfigWithSnapshot(candidate, node, st, "tun100", snapshot); err != nil {
-			return err
+		var prepareErr error
+		preparedRules, prepareErr = prepareLiveRouterRules(candidate, node, st, snapshot)
+		if prepareErr != nil {
+			return prepareErr
 		}
 		body, err := os.ReadFile(candidate)
 		if err != nil {
@@ -485,6 +497,10 @@ func (s *Server) ensureRouterLocked(ctx context.Context) (bool, error) {
 			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
 		}
 		return false, err
+	}
+	if reapplied && preparedRules != nil {
+		s.liveRules = preparedRules
+		activatedRules = true
 	}
 	log.Printf("ensureRouter: ok sysVPN=%v", snapshot.SystemVPNUp)
 	return reapplied, nil

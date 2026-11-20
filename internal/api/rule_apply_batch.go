@@ -126,5 +126,5 @@ func (s *Server) applyRuleBatch(ctx context.Context, reason string) (bool, error
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	return s.ensureRouterResult(withApplyReason(ctx, reason))
+	return s.publishLiveRules(ctx, reason)
 }

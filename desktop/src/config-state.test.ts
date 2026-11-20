@@ -17,6 +17,20 @@ function state(overrides: Partial<RouterConfigurationState> = {}): RouterConfigu
 }
 
 describe("router configuration diagnostics", () => {
+  it("distinguishes published rules from an acknowledged core configuration", () => {
+    const html = renderConfigurationState(
+      state({
+        phase: "rules_published",
+        publishedRulesVersion: "aaaaaaaaaaaa123456",
+        matchesSavedSettings: undefined,
+      }),
+    );
+    expect(html).toContain("Правила обновлены без перезапуска VPN");
+    expect(html).toContain("Опубликованные правила</dt><dd>aaaaaaaaaaaa");
+    expect(html).toContain("Подтверждение загрузки от ядра недоступно");
+    expect(html).toContain("Уже открытые соединения сохраняют свой маршрут");
+    expect(html).not.toContain("Сохранённые настройки соответствуют подтверждённой версии");
+  });
   it("distinguishes a checked unchanged config from a restarted one", () => {
     const html = renderConfigurationState(state({ unchanged: true }));
     expect(html).toContain("Конфигурация не изменилась — перезапуск не потребовался");

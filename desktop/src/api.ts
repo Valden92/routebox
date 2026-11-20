@@ -125,6 +125,7 @@ export interface RouterConfigurationState {
     | "preparing"
     | "applying"
     | "applied"
+    | "rules_published"
     | "rejected"
     | "rolling_back"
     | "rolled_back"
@@ -142,6 +143,7 @@ export interface RouterConfigurationState {
   running: boolean;
   matchesSavedSettings?: boolean;
   unchanged?: boolean;
+  publishedRulesVersion?: string;
 }
 
 export interface StatusResponse {
