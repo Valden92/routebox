@@ -33,6 +33,7 @@ import {
 import { formatPing } from "./ping-label";
 import { AutoSelectSession } from "./autoselect-session";
 import { ModalLifecycle } from "./modal-lifecycle";
+import { RulesController, ruleMutationError, setRuleButtonPending } from "./rules-controller";
 import { orderNodes, retainPingsForNodes } from "./nodes-sort";
 import {
   autoSelectResultToast,
@@ -1124,7 +1125,7 @@ function renderRulesList(container: HTMLElement, rules: DomainRule[], emptyText:
         </div>
         ${rulePathSelect(r)}
         <label class="check-label small"><input type="checkbox" data-rule-enabled="${r.id}" ${r.enabled ? "checked" : ""} /> Вкл</label>
-        <button data-del="${r.id}" class="secondary small">×</button>
+        <button data-del="${r.id}" class="secondary small" aria-label="Удалить правило ${escapeHtml(r.pattern)}" title="Удалить правило">×</button>
       </li>`;
     })
     .join("");
@@ -1133,9 +1134,13 @@ function renderRulesList(container: HTMLElement, rules: DomainRule[], emptyText:
 function bindRuleControls(root: HTMLElement) {
   root.querySelectorAll("[data-del]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      await api(`/api/rules/${(btn as HTMLButtonElement).dataset.del}`, { method: "DELETE" });
-      await loadRules();
-      showToast("Правило удалено");
+      try {
+        if (await rulesController.remove((btn as HTMLButtonElement).dataset.del!)) {
+          showToast("Правило удалено");
+        }
+      } catch (error) {
+        showToast(ruleMutationError(error, "remove"), true);
+      }
     });
   });
   root.querySelectorAll("[data-rule-path]").forEach((sel) => {
@@ -1144,7 +1149,7 @@ function bindRuleControls(root: HTMLElement) {
         method: "PUT",
         body: JSON.stringify({ path: (sel as HTMLSelectElement).value }),
       });
-      await loadRules();
+      await loadRules(true);
       showToast("Правило обновлено");
     });
   });
@@ -1154,13 +1159,12 @@ function bindRuleControls(root: HTMLElement) {
         method: "PUT",
         body: JSON.stringify({ enabled: (inp as HTMLInputElement).checked }),
       });
-      await loadRules();
+      await loadRules(true);
       showToast("Правило обновлено");
     });
   });
 }
 
-let rulesLoadInFlight = false;
 let rulesSignature = "";
 let cachedRulesData: RulesResponse | null = null;
 
@@ -1192,19 +1196,34 @@ function renderRules(data: RulesResponse) {
     : `Всего правил: ${domains.length}`;
 }
 
-async function loadRules(force = false) {
-  if (rulesLoadInFlight) return;
-  rulesLoadInFlight = true;
-  try {
-    const data = await api<RulesResponse>("/api/rules");
-    const sig = rulesDataSignature(data);
-    if (!force && sig === rulesSignature) return;
-    rulesSignature = sig;
-    cachedRulesData = data;
-    renderRules(data);
-  } finally {
-    rulesLoadInFlight = false;
-  }
+const rulesController = new RulesController(
+  {
+    load: () => api<RulesResponse>("/api/rules"),
+    add: (rule) => api("/api/rules", { method: "POST", body: JSON.stringify(rule) }),
+    remove: (id) => api(`/api/rules/${id}`, { method: "DELETE" }),
+  },
+  (view) => {
+    if (view.data) {
+      cachedRulesData = view.data;
+      const signature = rulesDataSignature(view.data);
+      if (signature !== rulesSignature) {
+        rulesSignature = signature;
+        renderRules(view.data);
+      }
+    }
+    setRuleButtonPending(el<HTMLButtonElement>("#btn-add-rule"), view.adding);
+    el<HTMLFormElement>("#form-add-rule").setAttribute("aria-busy", String(view.adding));
+    el("#rules-operation-status").textContent = [
+      view.adding ? "Добавляем правило…" : "",
+      view.deleting ? `Удаляем правил: ${view.deleting}…` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  },
+);
+
+function loadRules(force = false): Promise<void> {
+  return rulesController.refresh(force);
 }
 
 function setupTabs() {
@@ -1447,14 +1466,16 @@ window.addEventListener("DOMContentLoaded", () => {
     e.preventDefault();
     const fd = new FormData(e.target as HTMLFormElement);
     try {
-      await api("/api/rules", {
-        method: "POST",
-        body: JSON.stringify({ pattern: fd.get("pattern"), path: fd.get("path") }),
-      });
-      loadRules();
-      showToast("Правило добавлено");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Ошибка", true);
+      if (
+        await rulesController.add({
+          pattern: String(fd.get("pattern") || "").trim(),
+          path: fd.get("path") as RoutePath,
+        })
+      ) {
+        showToast("Правило добавлено");
+      }
+    } catch (error) {
+      showToast(ruleMutationError(error, "add"), true);
     }
   });
 
@@ -1465,13 +1486,14 @@ window.addEventListener("DOMContentLoaded", () => {
     const btn = el<HTMLButtonElement>("#btn-auto-rule");
     const url = String(fd.get("url") || "").trim();
     if (!url) return;
-    (btn as HTMLButtonElement).disabled = true;
+    if (btn.disabled) return;
+    setRuleButtonPending(btn, true);
     try {
       const res = await api<AutoCheckResponse>("/api/rules/auto-check", {
         method: "POST",
         body: JSON.stringify({ url }),
       });
-      await loadRules();
+      await loadRules(true);
       const path = res.rule?.path || res.suggestedPath;
       const applied = res.reapplied ? " Конфиг VPN переприменён." : "";
       showToast(
@@ -1481,7 +1503,7 @@ window.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Ошибка авто-проверки", true);
     } finally {
-      (btn as HTMLButtonElement).disabled = false;
+      setRuleButtonPending(btn, false);
     }
   });
 

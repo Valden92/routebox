@@ -814,3 +814,34 @@ button.secondary:not(:disabled) {
 .toast.err {
   border-color: var(--err);
 }
+
+/* Press immediately; keep the submitted button depressed until completion. */
+#tab-rules button {
+  transition:
+    transform 90ms ease-out,
+    filter 90ms ease-out,
+    box-shadow 90ms ease-out;
+}
+
+#tab-rules button:active:not(:disabled),
+#tab-rules button.is-pending {
+  transform: translateY(2px) scale(0.98);
+  filter: brightness(0.8);
+  box-shadow: inset 0 3px 7px rgb(0 0 0 / 40%);
+}
+
+#tab-rules button.is-pending:disabled {
+  opacity: 1;
+  cursor: wait;
+}
+
+.rules-operation-status {
+  min-height: 1.4em;
+  margin: 0.3rem 0 0.6rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #tab-rules button {
+    transition: none;
+  }
+}

@@ -31,31 +31,90 @@ import (
 )
 
 type Server struct {
-	Store          *config.Store
-	SingBox        *singbox.Manager
-	router         chi.Router
-	refresh        *refreshScheduler
-	autoMu         sync.Mutex
-	observedHosts  map[string]time.Time
-	autoSelectJobs sync.Map   // jobId → *autoSelectJob
-	autoSelectMu   sync.Mutex // probe jobs share ports and a config file
+	runtimeMu       sync.RWMutex // serializes unlock/bootstrap, protected requests and shutdown
+	startWorkers    func()
+	runtimeStarted  bool
+	initiallyLocked bool
+	shuttingDown    bool
+	Store           *config.Store
+	SingBox         *singbox.Manager
+	router          chi.Router
+	refresh         *refreshScheduler
+	autoMu          sync.Mutex
+	observedHosts   map[string]time.Time
+	autoSelectJobs  sync.Map   // jobId → *autoSelectJob
+	autoSelectMu    sync.Mutex // probe jobs share ports and a config file
 }
 
 func NewServer(store *config.Store, sb *singbox.Manager) *Server {
-	s := &Server{Store: store, SingBox: sb, refresh: newRefreshScheduler(store), observedHosts: map[string]time.Time{}}
+	s := &Server{Store: store, SingBox: sb, refresh: newRefreshScheduler(store), observedHosts: map[string]time.Time{}, initiallyLocked: store.IsLocked()}
 	s.routes()
+	s.startWorkers = s.startBackgroundWorkers
+	s.startRuntimeLocked()
+	return s
+}
+
+// Called under runtimeMu (or before publishing a newly constructed server).
+func (s *Server) startRuntimeLocked() {
+	if s.startWorkers == nil || s.runtimeStarted || s.Store.IsLocked() || s.shuttingDown {
+		return
+	}
+	s.runtimeStarted = true
+	s.startWorkers()
+}
+
+func (s *Server) startBackgroundWorkers() {
+	if s.initiallyLocked {
+		st := s.Store.Get()
+		s.SingBox = singbox.NewManager(singbox.ResolveBin(st.SingBoxPath), st.SingBoxConfigPath)
+	}
 	s.refresh.Start()
 	s.startTrafficObserver()
 	s.startSystemVPNWatcher()
 	go func() {
-		if !s.shouldStartRouterOnLaunch() {
+		s.runtimeMu.RLock()
+		defer s.runtimeMu.RUnlock()
+		if s.shuttingDown || !s.shouldStartRouterOnLaunch() {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		_ = s.ensureRouter(ctx)
 	}()
-	return s
+}
+
+// StopRouter does no network cleanup when encrypted settings were never unlocked.
+func (s *Server) StopRouter() {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	s.shuttingDown = true
+	if !s.runtimeStarted {
+		return
+	}
+	_ = s.SingBox.Stop()
+	singbox.RestoreAfterPersonalVPNOn(s.Store.Get().MainInterface)
+}
+
+func (s *Server) requireUnlocked(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if (r.Method == http.MethodGet && (r.URL.Path == "/api/health" || r.URL.Path == "/api/version")) || (r.Method == http.MethodPost && r.URL.Path == "/api/unlock") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		s.runtimeMu.RLock()
+		if s.shuttingDown {
+			s.runtimeMu.RUnlock()
+			writeJSONError(w, http.StatusServiceUnavailable, "shutting_down", "Демон завершает работу")
+			return
+		}
+		if s.Store.IsLocked() {
+			s.runtimeMu.RUnlock()
+			writeJSONError(w, http.StatusLocked, "config_locked", "Настройки зашифрованы. Разблокируйте их паролем")
+			return
+		}
+		s.runtimeMu.RUnlock()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // NewTestServer — HTTP API без фоновых воркеров и автозапуска router (для unit/httptest).
@@ -97,6 +156,7 @@ func (s *Server) routes() {
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
 	}))
+	r.Use(s.requireUnlocked)
 	r.Get("/api/health", s.health)
 	r.Get("/api/version", s.version)
 	r.Get("/api/status", s.status)
@@ -246,10 +306,18 @@ func (s *Server) unlock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	if s.shuttingDown {
+		writeJSONError(w, http.StatusServiceUnavailable, "shutting_down", "Демон завершает работу")
+		return
+	}
+
 	if err := s.Store.Unlock(req.Passphrase); err != nil {
 		http.Error(w, err.Error(), 401)
 		return
 	}
+	s.startRuntimeLocked()
 	writeJSON(w, map[string]string{"status": "unlocked"})
 }
 

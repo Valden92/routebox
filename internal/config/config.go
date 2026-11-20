@@ -1,9 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 )
@@ -111,9 +115,12 @@ type Settings struct {
 }
 
 type Store struct {
-	mu       sync.RWMutex
-	settings Settings
-	path     string
+	mu        sync.RWMutex
+	settings  Settings
+	path      string // canonical plaintext path; never gains repeated .enc suffixes
+	encrypted bool
+	key       []byte // retained only in memory after unlock
+	salt      []byte
 }
 
 func DefaultSettings(dataDir string) Settings {
@@ -154,49 +161,137 @@ func NewStore(dataDir string) (*Store, error) {
 		settings: DefaultSettings(dataDir),
 		path:     filepath.Join(dataDir, "settings.json"),
 	}
-	if err := s.Load(); err != nil && !os.IsNotExist(err) {
+	if err := s.Load(); err != nil && !os.IsNotExist(err) && !errors.Is(err, ErrLocked) {
 		return nil, err
 	}
 	return s, nil
 }
 
-func (s *Store) Path() string { return s.path }
+// ErrLocked distinguishes encrypted settings awaiting a password from a missing file.
+var ErrLocked = errors.New("config is locked; unlock required")
+
+func (s *Store) Path() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.storagePathLocked()
+}
+
+func (s *Store) storagePathLocked() string {
+	if s.encrypted {
+		return s.path + ".enc"
+	}
+	return s.path
+}
+
+func (s *Store) IsLocked() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.encrypted && len(s.key) == 0
+}
+
+func cloneSettings(st Settings) Settings {
+	st.Subscriptions = slices.Clone(st.Subscriptions)
+	for i := range st.Subscriptions {
+		st.Subscriptions[i].NodeSelectCounts = maps.Clone(st.Subscriptions[i].NodeSelectCounts)
+		st.Subscriptions[i].NodeAutoSelectWeights = maps.Clone(st.Subscriptions[i].NodeAutoSelectWeights)
+	}
+	st.DomainRules = slices.Clone(st.DomainRules)
+	st.AppRules = slices.Clone(st.AppRules)
+	if st.PersonalVPN.TLSFragment != nil {
+		v := *st.PersonalVPN.TLSFragment
+		st.PersonalVPN.TLSFragment = &v
+	}
+	return st
+}
 
 func (s *Store) Get() Settings {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.settings
+	return cloneSettings(s.settings)
 }
 
 func (s *Store) Update(fn func(*Settings)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	fn(&s.settings)
-	return s.saveLocked()
+	if s.encrypted && len(s.key) == 0 {
+		return ErrLocked
+	}
+	candidate := cloneSettings(s.settings)
+	fn(&candidate)
+	candidate.DataDir = s.settings.DataDir
+	candidate.Encrypted = s.encrypted
+	// The callback may retain references or install caller-owned slices/maps.
+	committed := cloneSettings(candidate)
+	if err := s.saveLocked(committed); err != nil {
+		return err
+	}
+	s.settings = committed
+	return nil
 }
 
 func (s *Store) Load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	enc, err := os.ReadFile(s.path + ".enc")
+	switch {
+	case err == nil:
+		if len(s.key) == 0 {
+			s.encrypted = true
+			s.settings.Encrypted = true
+			return ErrLocked
+		}
+		var blob encryptedBlob
+		if err = json.Unmarshal(enc, &blob); err != nil {
+			return err
+		}
+		if !bytes.Equal(blob.Salt, s.salt) {
+			return errors.New("encrypted config key changed; reopen store to unlock")
+		}
+		b, decryptErr := decrypt(blob, s.key)
+		if decryptErr != nil {
+			return decryptErr
+		}
+		st, decodeErr := s.decodeSettings(b, true)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		s.settings = st
+		return nil
+	case !os.IsNotExist(err):
+		return err
+	case s.encrypted:
+		return err // Never fall back to a plaintext copy of an encrypted store.
+	}
 	b, err := os.ReadFile(s.path)
 	if err != nil {
 		return err
 	}
+	st, err := s.decodeSettings(b, false)
+	if err != nil {
+		return err
+	}
+	s.settings = st
+	return nil
+}
+
+// decodeSettings is shared by plaintext and encrypted loads (caller holds mu).
+func (s *Store) decodeSettings(b []byte, encrypted bool) (Settings, error) {
 	var st Settings
 	if err := json.Unmarshal(b, &st); err != nil {
-		return err
+		return Settings{}, err
 	}
 	if st.SystemVPN.NMConnectionID == "" {
 		var legacy struct {
 			WorkVPN SystemVPN `json:"workVpn"`
 		}
-		if json.Unmarshal(b, &legacy) == nil && legacy.WorkVPN.NMConnectionID != "" {
+		if json.Unmarshal(b, &legacy) == nil {
 			st.SystemVPN = legacy.WorkVPN
 		}
 	}
 	st.DataDir = s.settings.DataDir
+	st.Encrypted = encrypted
 	if st.APIListen == "" {
-		st.APIListen = s.settings.APIListen
+		st.APIListen = DefaultSettings(st.DataDir).APIListen
 	}
 	if st.SingBoxConfigPath == "" {
 		st.SingBoxConfigPath = filepath.Join(st.DataDir, "sing-box.json")
@@ -204,20 +299,54 @@ func (s *Store) Load() error {
 	if st.SingBoxPath == "" {
 		st.SingBoxPath = defaultSingBoxPath()
 	}
-	s.settings = st
-	return nil
+	return st, nil
 }
 
-func (s *Store) saveLocked() error {
-	b, err := json.MarshalIndent(s.settings, "", "  ")
+func (s *Store) saveLocked(st Settings) error {
+	if s.encrypted && len(s.key) == 0 {
+		return ErrLocked
+	}
+	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, b, 0o600)
+	if s.encrypted {
+		blob, err := encrypt(b, s.key, s.salt)
+		if err != nil {
+			return err
+		}
+		b, err = json.Marshal(blob)
+		if err != nil {
+			return err
+		}
+	}
+	return writeAtomic(s.storagePathLocked(), b)
 }
 
+// SavePlain preserves an already enabled encryption mode; it cannot downgrade it.
 func (s *Store) SavePlain() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.saveLocked()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveLocked(s.settings)
+}
+
+// Write in the same directory so rename atomically replaces the old complete file.
+func writeAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".settings-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }

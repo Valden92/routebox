@@ -136,7 +136,7 @@ lint: lint-go lint-ui
 test: test-go test-ui test-development
 
 test-go:
-	cd $(ROOT) && $(GO) test ./tests/... ./internal/...
+	cd $(ROOT) && $(GO) test ./tests/... ./internal/... ./cmd/...
 
 test-ui:
 	cd $(ROOT)/desktop && npm test

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
@@ -24,29 +25,14 @@ func main() {
 	)
 	flag.Parse()
 
-	store, err := config.NewStore(*dataDir)
+	store, err := initializeStore(*dataDir, *listen, *unlock)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := store.TryLoad(); err != nil {
-		switch {
-		case os.IsNotExist(err) && *unlock != "":
-			if unlockErr := store.Unlock(*unlock); unlockErr != nil {
-				log.Fatal(unlockErr)
-			}
-		case os.IsNotExist(err):
-			_ = store.SavePlain()
-		default:
-			log.Fatal(err)
-		}
-	}
-	_ = store.Update(func(st *config.Settings) {
-		st.APIListen = *listen
-	})
 
 	st := store.Get()
 	bin := singbox.ResolveBin(st.SingBoxPath)
-	if !singbox.HostReady(bin) {
+	if !store.IsLocked() && !singbox.HostReady(bin) {
 		log.Printf("WARN: личный VPN недоступен — выполните: make sync (setcap + NetworkManager)")
 	}
 	sb := singbox.NewManager(bin, st.SingBoxConfigPath)
@@ -70,9 +56,36 @@ func main() {
 	<-sig
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = sb.Stop()
-	singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
+	srv.StopRouter()
 	_ = httpServer.Shutdown(ctx)
+}
+
+// initializeStore never writes defaults over settings awaiting a password.
+func initializeStore(dataDir, listen, passphrase string) (*config.Store, error) {
+	store, err := config.NewStore(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.TryLoad(); err != nil {
+		switch {
+		case errors.Is(err, config.ErrLocked):
+			if passphrase == "" {
+				// Serve only health/version/unlock until a password is supplied.
+				return store, nil
+			}
+			if unlockErr := store.Unlock(passphrase); unlockErr != nil {
+				return nil, unlockErr
+			}
+		case os.IsNotExist(err):
+			// Update below creates the initial plaintext file atomically.
+		default:
+			return nil, err
+		}
+	}
+	if err := store.Update(func(st *config.Settings) { st.APIListen = listen }); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 func defaultDataDir() string {

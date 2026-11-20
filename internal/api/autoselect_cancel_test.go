@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/Valden92/routebox/internal/config"
 )
 
 func autoSelectCancelRequest(t *testing.T, subID, jobID string) *http.Request {
@@ -173,8 +175,11 @@ func TestAutoSelectCancelSurvivesAbortedHTTPRequest(t *testing.T) {
 }
 
 func TestAutoSelectCancelRoute(t *testing.T) {
-	s := &Server{}
-	s.routes()
+	store, err := config.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewTestServer(store, nil)
 	job := newAutoSelectTestJob(t, 312)
 	job.requestCancel()
 	job.finishIfCanceled()
