@@ -173,14 +173,20 @@
         </p>
 
         <form id="form-add-rule" class="inline-form">
-          <input name="pattern" placeholder="Домен или *.example.com" />
+          <input name="pattern" placeholder="Домен или *.example.com" required />
           <select name="path">
             <option value="direct">Без VPN</option>
             <option value="work">Системный VPN</option>
             <option value="personal">Личный VPN</option>
           </select>
-          <button type="submit">Добавить правило</button>
+          <button type="submit" id="btn-add-rule">Добавить правило</button>
         </form>
+        <p
+          id="rules-operation-status"
+          class="muted rules-operation-status"
+          role="status"
+          aria-live="polite"
+        ></p>
         <div class="rules-toolbar">
           <input
             id="rules-search"
