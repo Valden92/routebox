@@ -201,6 +201,14 @@ func WriteConfig(path string, node subscription.Node, st config.Settings, tunNam
 }
 
 func WriteRouterConfig(path string, node *subscription.Node, st config.Settings, tunName string) error {
+	return WriteRouterConfigWithSnapshot(path, node, st, tunName, CaptureRouterNetwork(st))
+}
+
+// WriteRouterConfigWithSnapshot builds a candidate without reading live network state.
+func WriteRouterConfigWithSnapshot(path string, node *subscription.Node, st config.Settings, tunName string, snapshot RouterNetworkSnapshot) error {
+	if snapshot.SystemVPNUp && (snapshot.SystemInterface == "" || snapshot.SystemDNS == "" || snapshot.SystemInterface == DefaultTunIface || snapshot.SystemInterface == snapshot.MainInterface) {
+		return fmt.Errorf("системный VPN ещё не предоставил отдельный интерфейс или DNS: дождитесь подключения и повторите применение")
+	}
 	if tunName == "" {
 		tunName = "tun100"
 	}
@@ -227,10 +235,10 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 	if personalAvailable {
 		dnsServers = append(dnsServers, dnsTLSServer("dns-proxy", "1.1.1.1", "proxy"))
 	}
-	sysUp := systemVPNUp(st)
-	sysIface := systemTunIface(st)
-	dnsRules := buildDNSRules(st, personalAvailable, sysUp, sysIface, &dnsServers)
-	routeExclude := routeExcludeAddresses(sysIface, sysUp, systemVPNEndpointCIDRs(st))
+	sysUp := snapshot.SystemVPNUp
+	sysIface := snapshot.SystemInterface
+	dnsRules := buildDNSRules(st, personalAvailable, sysUp, snapshot.SystemDNS, &dnsServers)
+	routeExclude := MergeRouteExclude(sysUp, snapshot.WorkRoutes, snapshot.EndpointCIDRs)
 	tunInbound := map[string]any{
 		"type":                  "tun",
 		"tag":                   "tun-in",
@@ -283,8 +291,8 @@ func WriteRouterConfig(path string, node *subscription.Node, st config.Settings,
 			"final":          "dns-direct",
 		},
 		"inbounds":  inbounds,
-		"outbounds": buildOutbounds(outbound, st),
-		"route":     buildRoute(st, node, sysUp, sysIface),
+		"outbounds": buildOutbounds(outbound, snapshot),
+		"route":     buildRoute(st, node, sysUp, snapshot.WorkRoutes),
 	}
 	if endpoint != nil {
 		cfg["endpoints"] = []any{endpoint}
@@ -339,16 +347,17 @@ func buildDirectOutbound(st config.Settings) map[string]any {
 	return o
 }
 
-func buildOutbounds(proxy map[string]any, st config.Settings) []any {
-	out := []any{
-		buildDirectOutbound(st),
+func buildOutbounds(proxy map[string]any, snapshot RouterNetworkSnapshot) []any {
+	direct := map[string]any{"type": "direct", "tag": "direct"}
+	if snapshot.MainInterface != "" {
+		direct["bind_interface"] = snapshot.MainInterface
 	}
+	out := []any{direct}
 	if proxy != nil {
 		out = append(out, proxy)
 	}
-	if systemVPNUp(st) {
-		iface := systemTunIface(st)
-		out = append(out, map[string]any{"type": "direct", "tag": "work", "bind_interface": iface})
+	if snapshot.SystemVPNUp {
+		out = append(out, map[string]any{"type": "direct", "tag": "work", "bind_interface": snapshot.SystemInterface})
 	}
 	return out
 }
@@ -369,7 +378,7 @@ func proxyBypassRules(node subscription.Node) []map[string]any {
 	}}
 }
 
-func buildDNSRules(st config.Settings, personalAvailable, sysUp bool, sysIface string, dnsServers *[]map[string]any) []map[string]any {
+func buildDNSRules(st config.Settings, personalAvailable, sysUp bool, corpDNS string, dnsServers *[]map[string]any) []map[string]any {
 	var rules []map[string]any
 	if personalAvailable {
 		for _, r := range routing.CollapseDomainRules(enabledDomainRules(st.DomainRules)) {
@@ -379,10 +388,8 @@ func buildDNSRules(st config.Settings, personalAvailable, sysUp bool, sysIface s
 			rules = append(rules, domainMatchRule(r.Pattern, map[string]any{"server": "dns-proxy"}))
 		}
 	}
-	if sysUp {
-		if corpDNS := systemVPNDNS(sysIface); corpDNS != "" {
-			*dnsServers = append(*dnsServers, dnsUDPServer("dns-work", corpDNS, "work"))
-		}
+	if sysUp && corpDNS != "" {
+		*dnsServers = append(*dnsServers, dnsUDPServer("dns-work", corpDNS, "work"))
 		rules = append(rules, map[string]any{
 			"domain_suffix": routing.DefaultCorpSuffixes(),
 			"server":        "dns-work",
@@ -418,7 +425,7 @@ func domainMatchRule(pattern string, base map[string]any) map[string]any {
 	return rule
 }
 
-func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, sysIface string) map[string]any {
+func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, workRoutes []string) map[string]any {
 	personalAvailable := st.PersonalVPN.Enabled && node != nil
 	rules := []map[string]any{
 		{"action": "sniff", "timeout": "1s"},
@@ -435,7 +442,7 @@ func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, sysIfac
 		rules = append(rules, proxyBypassRules(*node)...)
 	}
 	if sysUp {
-		for _, cidr := range WorkRoutesFromOS(sysIface) {
+		for _, cidr := range workRoutes {
 			rules = append(rules, map[string]any{
 				"ip_cidr":  []string{cidr},
 				"outbound": "work",

@@ -416,14 +416,19 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 		nodeName = node.Name
 		nodeProto = node.Protocol
 	}
+	snapshot := singbox.CaptureRouterNetwork(st)
 	log.Printf("ensureRouter: personalEnabled=%v sysVPN=%v wasRunning=%v node=%q proto=%s",
-		st.PersonalVPN.Enabled, singbox.SystemVPNUp(st), s.SingBox.Running(), nodeName, nodeProto)
+		st.PersonalVPN.Enabled, snapshot.SystemVPNUp, s.SingBox.Running(), nodeName, nodeProto)
 	runtimeTouched := false
 	err := applyRouterConfig(ctx, st.SingBoxConfigPath, func(candidate string) error {
-		if err := singbox.WriteRouterConfig(candidate, node, st, "tun100"); err != nil {
+		if err := singbox.WriteRouterConfigWithSnapshot(candidate, node, st, "tun100", snapshot); err != nil {
 			return err
 		}
-		if err := singbox.ValidateWrittenConfig(candidate, st); err != nil {
+		body, err := os.ReadFile(candidate)
+		if err != nil {
+			return err
+		}
+		if err := singbox.ValidateConfigBytes(body, snapshot.SystemVPNUp); err != nil {
 			return err
 		}
 		return singbox.ValidateConfigContext(ctx, st.SingBoxPath, candidate)
@@ -449,7 +454,7 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 		}
 		return err
 	}
-	log.Printf("ensureRouter: ok mode=%s", singbox.ConfigModeFor(st))
+	log.Printf("ensureRouter: ok sysVPN=%v", snapshot.SystemVPNUp)
 	return nil
 }
 

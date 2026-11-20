@@ -4,6 +4,10 @@ package singbox
 
 import "github.com/Valden92/routebox/internal/config"
 
+func readSystemVPNState(st config.Settings) (bool, string) {
+	return systemVPNUp(st), systemTunIface(st)
+}
+
 func systemVPNUp(st config.Settings) bool {
 	return workVPNActive("tun0")
 }

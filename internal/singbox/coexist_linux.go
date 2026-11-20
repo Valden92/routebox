@@ -11,6 +11,36 @@ import (
 	"github.com/Valden92/routebox/internal/nm"
 )
 
+// Read NM status once for a candidate, preserving the existing TUN fallback.
+func readSystemVPNState(st config.Settings) (bool, string) {
+	id := st.SystemVPN.NMConnectionID
+	if id == "" {
+		id = "PTsecurity"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	status := nm.Status(ctx, id)
+	return systemVPNStateFromStatus(status, workVPNActive)
+}
+
+func systemVPNStateFromStatus(status nm.SystemVPNStatus, active func(string) bool) (bool, string) {
+	iface := status.Interface
+	up := status.Connected || status.State == "connecting"
+	if !up {
+		for _, candidate := range uniqueStrings(iface, "tun0", "tun1") {
+			if candidate != "" && active(candidate) {
+				up = true
+				iface = candidate
+				break
+			}
+		}
+	}
+	if iface == "" {
+		iface = "tun0"
+	}
+	return up, iface
+}
+
 // SystemVPNUp — системный VPN активен или подключается (NM).
 func SystemVPNUp(st config.Settings) bool {
 	return systemVPNUp(st)
