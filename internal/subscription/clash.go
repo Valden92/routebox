@@ -297,6 +297,11 @@ func clashHysteria2URI(m map[string]any, server string, port int, name string) (
 		return "", fmt.Errorf("hysteria2: нет password")
 	}
 	q := url.Values{}
+	// Preserve certificate pin intent, including an empty/malformed value.
+	// The outbound builder must reject unsupported pins rather than silently drop them.
+	if _, present := m["fingerprint"]; present {
+		q.Set("pinSHA256", clashString(m, "fingerprint"))
+	}
 	sni := firstNonEmpty(clashString(m, "sni"), clashString(m, "servername"))
 	if sni == "" {
 		if tls := clashMap(m, "tls"); tls != nil {

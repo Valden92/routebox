@@ -2,6 +2,7 @@ package singbox_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,21 +46,27 @@ func TestURIToOutboundHysteria2(t *testing.T) {
 	}
 }
 
-func TestURIToOutboundHysteria2PinSHA256ImpliesInsecure(t *testing.T) {
-	node := subscription.Node{
-		RawURI: "hy2://secret@31.77.218.101:443?sni=31.77.218.101&obfs=salamander&obfs-password=x&pinSHA256=aabbcc#N",
-	}
-	o, err := singbox.URIToOutbound(node)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tls, ok := o["tls"].(map[string]any)
-	if !ok || tls["insecure"] != true {
-		t.Fatalf("pinSHA256 must map to tls.insecure for self-signed HY2, got %+v", o["tls"])
-	}
-	obfs, ok := o["obfs"].(map[string]any)
-	if !ok || obfs["type"] != "salamander" || obfs["password"] != "x" {
-		t.Fatalf("obfs %+v", o["obfs"])
+func TestURIToOutboundHysteria2RejectsCertificatePins(t *testing.T) {
+	for _, scheme := range []string{"hy2", "hysteria2"} {
+		for _, query := range []string{
+			"pinSHA256=" + strings.Repeat("ab", 32),
+			"pinSHA256=BA:88:45:17:A1", "pinSHA256=YWJjZA==", "pin_sha256=secret-pin",
+			"pinnedPeerCertSha256=secret-pin", "pcs=secret-pin", "PINSHA256=secret-pin",
+			"PINNEDPEERCERTSHA256=secret-pin", "pinSHA256", "pinSHA256=", "pinSHA256=%20",
+			"pinSHA256=&pinSHA256=secret-pin", "%70inSHA256=secret-pin",
+			"pinSHA256=secret-pin&insecure=1", "pinSHA256=secret-pin&allowInsecure=true",
+		} {
+			t.Run(scheme+"/"+query, func(t *testing.T) {
+				node := subscription.Node{RawURI: scheme + "://auth-secret@hy2.example:443?sni=hy2.example&" + query}
+				o, err := singbox.URIToOutbound(node)
+				if !errors.Is(err, singbox.ErrUnsupportedCertificatePin) || o != nil {
+					t.Fatalf("pin accepted or ignored: outbound=%v err=%v", o, err)
+				}
+				if strings.Contains(err.Error(), "secret-pin") || strings.Contains(err.Error(), "auth-secret") {
+					t.Fatalf("credentials or pin leaked: %v", err)
+				}
+			})
+		}
 	}
 }
 
