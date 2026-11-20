@@ -33,6 +33,7 @@ import {
 import { formatPing } from "./ping-label";
 import { AutoSelectSession } from "./autoselect-session";
 import { AutoRoutingController, autoRoutingStatus, autoRoutingTransport } from "./auto-routing";
+import { renderConfigurationState } from "./config-state";
 import { ModalLifecycle } from "./modal-lifecycle";
 import { RulesController, ruleMutationError, setRuleButtonPending } from "./rules-controller";
 import { orderNodes, retainPingsForNodes } from "./nodes-sort";
@@ -433,6 +434,7 @@ async function refreshStatus() {
       <dt>Наблюдение</dt><dd>${badge(Boolean(s.personalVpn.routingRunning), "Активно", "Не активно")}</dd>
     </dl>
     <p class="muted">${escapeHtml(routerModeHint(s.personalVpn.configMode))}</p>
+    ${renderConfigurationState(s.personalVpn.configuration)}
     ${!s.personalVpn.routingRunning && pvErr ? `<p class="err">${escapeHtml(pvErr)}</p>` : ""}
   `;
   const cfgBadge = badge(ready, "Настроен", "Не настроен");

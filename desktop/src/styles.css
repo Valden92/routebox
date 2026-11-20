@@ -37,6 +37,12 @@ body {
   font-weight: 600;
 }
 
+.router-configuration {
+  margin-top: 1rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--border);
+}
+
 .brand-title {
   background: linear-gradient(
     110deg,
