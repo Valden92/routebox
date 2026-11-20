@@ -380,16 +380,14 @@ func proxyBypassRules(node subscription.Node) []map[string]any {
 
 func buildDNSRules(st config.Settings, personalAvailable, sysUp bool, corpDNS string, dnsServers *[]map[string]any) []map[string]any {
 	var rules []map[string]any
-	if personalAvailable {
-		for _, r := range routing.CollapseDomainRules(enabledDomainRules(st.DomainRules)) {
-			if r.Path != config.RoutePersonal {
-				continue
-			}
-			rules = append(rules, domainMatchRule(r.Pattern, map[string]any{"server": "dns-proxy"}))
-		}
-	}
-	if sysUp && corpDNS != "" {
+	workAvailable := sysUp && corpDNS != ""
+	if workAvailable {
 		*dnsServers = append(*dnsServers, dnsUDPServer("dns-work", corpDNS, "work"))
+	}
+	for _, rule := range compileDomainRules(st, personalAvailable, workAvailable) {
+		rules = append(rules, domainMatchRule(rule.pattern, map[string]any{"server": rule.dns}))
+	}
+	if workAvailable {
 		rules = append(rules, map[string]any{
 			"domain_suffix": routing.DefaultCorpSuffixes(),
 			"server":        "dns-work",
@@ -449,12 +447,8 @@ func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, workRou
 			})
 		}
 	}
-	for _, r := range routing.CollapseDomainRules(enabledDomainRules(st.DomainRules)) {
-		tag, ok := pathTagIfAvailable(r.Path, personalAvailable, sysUp)
-		if !ok {
-			continue
-		}
-		rules = append(rules, domainMatchRule(r.Pattern, map[string]any{"outbound": tag}))
+	for _, rule := range compileDomainRules(st, personalAvailable, sysUp) {
+		rules = append(rules, domainMatchRule(rule.pattern, map[string]any{"outbound": rule.outbound}))
 	}
 	for _, a := range st.AppRules {
 		if !a.Enabled || a.ProcessName == "" {
