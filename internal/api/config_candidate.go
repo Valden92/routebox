@@ -9,7 +9,7 @@ import (
 
 // prepare must generate and validate the candidate without changing the runtime.
 // Commit the checked file atomically before invoking any stop/start operation.
-// Failed starts still need runtime rollback (the next apply stage).
+// applyRouterConfig supplies runtime recovery around this file commit.
 func applyCandidateConfig(ctx context.Context, path string, prepare func(string) error, apply func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err

@@ -113,7 +113,7 @@ func WaitClashAPI(ctx context.Context, controllerAddr string) error {
 		resp, err := clashAPIClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
-			if resp.StatusCode < 500 {
+			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
 			last = fmt.Errorf("clash API HTTP %s", resp.Status)
