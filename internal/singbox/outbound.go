@@ -3,7 +3,6 @@ package singbox
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -15,10 +14,6 @@ import (
 // defaultTLSFingerprint — uTLS-отпечаток, если в URI не задан fp.
 // Для Reality uTLS обязателен (sing-box: «uTLS is required by reality client»).
 const defaultTLSFingerprint = "chrome"
-
-// ErrUnsupportedCertificatePin prevents certificate pinning from degrading to insecure TLS.
-// The pinned sing-box 1.14 supports SPKI pins, not Hysteria2 whole-certificate pins.
-var ErrUnsupportedCertificatePin = errors.New("pin сертификата Hysteria2 пока не поддерживается; выберите другой сервер")
 
 // BuildOutbound строит outbound sing-box из узла подписки.
 // Для OpenVPN возвращается endpoint (isEndpoint=true) — он идёт в секцию endpoints.
@@ -419,13 +414,7 @@ func trojanOutbound(tag string, u *url.URL, fragment bool) (map[string]any, erro
 }
 
 func hysteria2Outbound(tag string, u *url.URL) (map[string]any, error) {
-	q, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		return nil, fmt.Errorf("некорректные параметры ссылки Hysteria2")
-	}
-	if queryPinnedCert(q) {
-		return nil, ErrUnsupportedCertificatePin
-	}
+	q := u.Query()
 	port := u.Port()
 	if port == "" {
 		port = "443"
@@ -447,9 +436,10 @@ func hysteria2Outbound(tag string, u *url.URL) (map[string]any, error) {
 	if sni := q.Get("sni"); sni != "" {
 		tlsParams["server_name"] = sni
 	}
-	// Only an explicit setting may disable verification. A certificate hash is not
-	// an SPKI hash and must never be translated into insecure or an SPKI pin.
-	if queryInsecure(q) {
+	// Happ/Xray forbid allowInsecure and emit pinSHA256 instead. sing-box has no
+	// cert-fingerprint pin equivalent for HY2 (only SPKI), so treat pin as
+	// "trust this self-signed peer" via insecure for Router BOX.
+	if queryInsecure(q) || queryPinnedCert(q) {
 		tlsParams["insecure"] = true
 	}
 	if alpn := strings.TrimSpace(q.Get("alpn")); alpn != "" {
@@ -497,10 +487,8 @@ func queryInsecure(q url.Values) bool {
 }
 
 func queryPinnedCert(q url.Values) bool {
-	for key := range q {
-		switch strings.ToLower(key) {
-		case "pinsha256", "pin_sha256", "pinnedpeercertsha256", "pcs":
-			// Empty and duplicate values must fail closed as well.
+	for _, k := range []string{"pinSHA256", "pin_sha256", "pinnedPeerCertSha256", "pcs"} {
+		if strings.TrimSpace(q.Get(k)) != "" {
 			return true
 		}
 	}

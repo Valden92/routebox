@@ -337,10 +337,6 @@ func (s *Server) lock(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) personalConnect(w http.ResponseWriter, r *http.Request) {
-	if err := s.validateSelectedOutbound(s.Store.Get()); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_config", err.Error())
-		return
-	}
 	ready := s.personalReadiness()
 	if !ready.Configured {
 		log.Printf("personal-connect: blocked readiness reason=%s msg=%q", ready.Reason, ready.Message)
@@ -405,11 +401,6 @@ func (s *Server) ensureRouter(ctx context.Context) error {
 
 func (s *Server) ensureRouterLocked(ctx context.Context) error {
 	st := s.Store.Get()
-	if st.PersonalVPN.Enabled {
-		if err := s.validateSelectedOutbound(st); err != nil {
-			return err
-		}
-	}
 	if !singbox.HostReady(st.SingBoxPath) {
 		return fmt.Errorf("host_not_ready: выполните make sync")
 	}
@@ -463,17 +454,6 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 	}
 	log.Printf("ensureRouter: ok mode=%s", singbox.ConfigModeFor(st))
 	return nil
-}
-
-// Validate the selected outbound without writing files, probing, or stopping the router.
-// Missing selection is still handled by the existing readiness/router logic.
-func (s *Server) validateSelectedOutbound(st config.Settings) error {
-	node, err := s.selectedNode(st)
-	if err != nil {
-		return nil
-	}
-	_, _, err = singbox.BuildOutbound(node, "proxy", st.PersonalVPN.FragmentTLS())
-	return err
 }
 
 func (s *Server) personalDisconnect(w http.ResponseWriter, r *http.Request) {
