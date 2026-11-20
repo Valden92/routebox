@@ -30,23 +30,25 @@ import (
 )
 
 type Server struct {
-	runtimeMu       sync.RWMutex // serializes unlock/bootstrap, protected requests and shutdown
-	startWorkers    func()
-	runtimeStarted  bool
-	initiallyLocked bool
-	shuttingDown    bool
-	Store           *config.Store
-	SingBox         *singbox.Manager
-	router          chi.Router
-	refresh         *refreshScheduler
-	autoMu          sync.Mutex
-	observedHosts   map[string]time.Time
-	autoSelectJobs  sync.Map   // jobId → *autoSelectJob
-	autoSelectMu    sync.Mutex // probe jobs share ports and a config file
+	runtimeMu         sync.RWMutex // serializes unlock/bootstrap, protected requests and shutdown
+	startWorkers      func()
+	runtimeStarted    bool
+	initiallyLocked   bool
+	shuttingDown      bool
+	Store             *config.Store
+	SingBox           *singbox.Manager
+	router            chi.Router
+	refresh           *refreshScheduler
+	autoMu            sync.Mutex
+	observedHosts     map[string]time.Time
+	autoSelectJobs    sync.Map   // jobId → *autoSelectJob
+	autoSelectMu      sync.Mutex // probe jobs share ports and a config file
+	fetchSubscription func(context.Context, string) (subscription.FetchResult, error)
 }
 
 func NewServer(store *config.Store, sb *singbox.Manager) *Server {
 	s := &Server{Store: store, SingBox: sb, refresh: newRefreshScheduler(store), observedHosts: map[string]time.Time{}, initiallyLocked: store.IsLocked()}
+	s.fetchSubscription = subscription.Fetch
 	s.routes()
 	s.startWorkers = s.startBackgroundWorkers
 	s.startRuntimeLocked()
@@ -117,12 +119,18 @@ func (s *Server) requireUnlocked(next http.Handler) http.Handler {
 }
 
 // NewTestServer — HTTP API без фоновых воркеров и автозапуска router (для unit/httptest).
-func NewTestServer(store *config.Store, sb *singbox.Manager) *Server {
+// An optional fixture fetcher keeps tests independent of real DNS/network access.
+// Without it, tests use exactly the same public-address guard as production.
+func NewTestServer(store *config.Store, sb *singbox.Manager, fetch ...func(context.Context, string) (subscription.FetchResult, error)) *Server {
 	s := &Server{
-		Store:         store,
-		SingBox:       sb,
-		refresh:       newRefreshScheduler(store),
-		observedHosts: map[string]time.Time{},
+		Store:             store,
+		SingBox:           sb,
+		refresh:           newRefreshScheduler(store),
+		observedHosts:     map[string]time.Time{},
+		fetchSubscription: subscription.Fetch,
+	}
+	if len(fetch) > 0 {
+		s.fetchSubscription = fetch[0]
 	}
 	s.routes()
 	return s
@@ -599,7 +607,7 @@ func (s *Server) addSubscription(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "укажите HTTP(S) URL подписки", 400)
 			return
 		}
-		fetched, err := subscription.Fetch(r.Context(), req.URL)
+		fetched, err := s.fetchSubscription(r.Context(), req.URL)
 		if err != nil {
 			http.Error(w, err.Error(), 502)
 			return
@@ -761,7 +769,7 @@ func (s *Server) refreshSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "локальный импорт нельзя обновить по сети — добавьте URL или импортируйте заново", 400)
 		return
 	}
-	fetched, err := subscription.Fetch(r.Context(), sub.URL)
+	fetched, err := s.fetchSubscription(r.Context(), sub.URL)
 	if err != nil {
 		http.Error(w, err.Error(), 502)
 		return
@@ -823,7 +831,7 @@ func (s *Server) loadNodes(r *http.Request, id string, st config.Settings) ([]su
 	if !subscription.IsRemoteURL(sub.URL) {
 		return nil, fmt.Errorf("локальный импорт: кэш узлов пуст — импортируйте подписку заново")
 	}
-	fetched, err := subscription.Fetch(r.Context(), sub.URL)
+	fetched, err := s.fetchSubscription(r.Context(), sub.URL)
 	if err != nil {
 		return nil, err
 	}

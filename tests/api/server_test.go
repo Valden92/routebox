@@ -2,8 +2,11 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -41,10 +44,32 @@ func newAPITest(t *testing.T) (*httptest.Server, *config.Store, *httptest.Server
 	t.Cleanup(subSrv.Close)
 
 	sb := singbox.NewManager("/nonexistent/sing-box-for-tests", filepath.Join(dir, "sing-box.json"))
-	srv := api.NewTestServer(store, sb)
+	srv := api.NewTestServer(store, sb, fetchSubscriptionFixture)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, store, subSrv
+}
+
+// Only local httptest fixtures are reachable through this injected test fetcher.
+func fetchSubscriptionFixture(ctx context.Context, address string) (subscription.FetchResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	if err != nil || !net.ParseIP(req.URL.Hostname()).IsLoopback() {
+		return subscription.FetchResult{}, fmt.Errorf("not a loopback fixture")
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return fmt.Errorf("fixture redirects are disabled")
+	}}
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
+	if err != nil {
+		return subscription.FetchResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return subscription.FetchResult{}, fmt.Errorf("fixture HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	return subscription.FetchResult{Body: body, Meta: subscription.MetaFromHeaders(resp.Header)}, err
 }
 
 func doJSON(t *testing.T, ts *httptest.Server, method, path string, body any) (int, []byte) {
