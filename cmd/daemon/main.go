@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,6 +26,20 @@ func main() {
 	)
 	flag.Parse()
 
+	if err := api.ValidateListenAddress(*listen); err != nil {
+		log.Fatal(err)
+	}
+	// Bind before publishing a new credential or starting routing workers.
+	listener, err := net.Listen("tcp", *listen)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer listener.Close()
+	access, err := api.NewLocalAccess(defaultDataDir())
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	store, err := initializeStore(*dataDir, *listen, *unlock)
 	if err != nil {
 		log.Fatal(err)
@@ -40,13 +55,13 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              *listen,
-		Handler:           srv.Handler(),
+		Handler:           access.Handler(srv.Handler()),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
 		log.Printf("vpn-router API listening on %s", *listen)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()

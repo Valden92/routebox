@@ -1,3 +1,5 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
+
 const API = "http://127.0.0.1:47891";
 
 export class ApiError extends Error {
@@ -11,26 +13,103 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
-    ...init,
-  });
+async function readResponse<T>(res: Response): Promise<T> {
   const text = await res.text();
   if (!res.ok) {
     let code = "error";
     let message = text || res.statusText;
     try {
-      const j = JSON.parse(text) as { code?: string; message?: string };
-      if (j.code) code = j.code;
-      if (j.message) message = j.message;
+      const body = JSON.parse(text) as { code?: string; message?: string };
+      code = body.code || code;
+      message = body.message || message;
     } catch {
       /* plain text */
     }
     throw new ApiError(res.status, code, message);
   }
-  if (!text) return {} as T;
-  return JSON.parse(text) as T;
+  return (text ? JSON.parse(text) : {}) as T;
+}
+
+export function createApiClient(
+  fetcher: typeof fetch = (...args) => fetch(...args),
+  tokenProvider?: () => Promise<string>,
+) {
+  let token: string | null = null;
+  let pending: Promise<string> | null = null;
+  const provide =
+    tokenProvider ??
+    (async () => {
+      if (isTauri()) {
+        try {
+          return await invoke<string>("local_api_token");
+        } catch {
+          throw new ApiError(
+            503,
+            "api_credential_unavailable",
+            "Нет доступа к API. Перезапустите приложение через make dev",
+          );
+        }
+      }
+      throw new ApiError(
+        503,
+        "api_desktop_required",
+        "Откройте Router BOX через make dev для доступа к API",
+      );
+    });
+  async function credential(): Promise<string> {
+    if (token) return token;
+    if (!pending) {
+      pending = (async () => {
+        const next = await provide();
+        if (!/^[a-fA-F0-9]{64}$/.test(next)) {
+          throw new ApiError(
+            503,
+            "invalid_api_credential",
+            "Недоступен токен API. Перезапустите приложение через make dev",
+          );
+        }
+        token = next;
+        return next;
+      })().finally(() => {
+        pending = null;
+      });
+    }
+    return pending;
+  }
+  return async function request<T>(path: string, init?: RequestInit): Promise<T> {
+    const method = init?.method ?? "GET";
+    const publicProbe = method === "GET" && (path === "/api/health" || path === "/api/version");
+    const used = publicProbe ? null : await credential();
+    const send = async (access: string | null) => {
+      const headers = new Headers(init?.headers);
+      if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      headers.delete("Authorization");
+      if (access) headers.set("Authorization", `Bearer ${access}`);
+      return readResponse<T>(
+        await fetcher(`${API}${path}`, { ...init, headers, credentials: "omit" }),
+      );
+    };
+    try {
+      return await send(used);
+    } catch (error) {
+      // Only this outer-guard response proves a mutation has not started.
+      if (
+        !publicProbe &&
+        error instanceof ApiError &&
+        error.status === 401 &&
+        error.code === "api_auth_required"
+      ) {
+        if (token === used) token = null;
+        return send(await credential());
+      }
+      throw error;
+    }
+  };
+}
+
+const defaultClient = createApiClient();
+export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  return defaultClient<T>(path, init);
 }
 
 export type RoutePath = "direct" | "work" | "personal";

@@ -68,7 +68,7 @@ export function personalStatusFlags(pv: StatusResponse["personalVpn"]): Personal
 }
 
 /** Минимальная поддерживаемая версия API демона (UI). */
-export const MIN_API_VERSION = 5;
+export const MIN_API_VERSION = 6;
 
 export function isDaemonApiOutdated(apiVersion?: number): boolean {
   return (apiVersion ?? 0) < MIN_API_VERSION;

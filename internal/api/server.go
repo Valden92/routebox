@@ -16,7 +16,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
 	"github.com/google/uuid"
 
 	"github.com/Valden92/routebox/internal/apps"
@@ -149,13 +148,7 @@ func (s *Server) shouldStartRouterOnLaunch() bool {
 
 func (s *Server) routes() {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.RealIP, middleware.Logger, middleware.Recoverer)
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
-		AllowCredentials: true,
-	}))
+	r.Use(middleware.RequestID, middleware.Logger, middleware.Recoverer)
 	r.Use(s.requireUnlocked)
 	r.Get("/api/health", s.health)
 	r.Get("/api/version", s.version)
@@ -199,7 +192,7 @@ func (s *Server) routes() {
 	s.router = r
 }
 
-const apiVersion = 5
+const apiVersion = 6
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -210,6 +203,7 @@ func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
 		"apiVersion": apiVersion,
 		"features": []string{
 			"system-vpn-readonly",
+			"local-api-token",
 			"personal-vpn-errors",
 			"sing-box-recover",
 			"auto-routing-observer",
