@@ -589,9 +589,21 @@ func validateConfigIfChanged(bin, cfgPath string) error {
 }
 
 func ValidateConfig(bin, cfgPath string) error {
+	return ValidateConfigContext(context.Background(), bin, cfgPath)
+}
+
+// ValidateConfigContext checks syntax without starting the router. Bound a stuck checker.
+func ValidateConfigContext(ctx context.Context, bin, cfgPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	bin = ResolveBin(bin)
-	out, err := exec.Command(bin, "check", "-c", cfgPath).CombinedOutput()
+	cmd := exec.CommandContext(ctx, bin, "check", "-c", cfgPath)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("проверка конфига sing-box: %w", ctx.Err())
+		}
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
 			msg = err.Error()

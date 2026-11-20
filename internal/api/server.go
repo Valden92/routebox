@@ -418,42 +418,38 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 	}
 	log.Printf("ensureRouter: personalEnabled=%v sysVPN=%v wasRunning=%v node=%q proto=%s",
 		st.PersonalVPN.Enabled, singbox.SystemVPNUp(st), s.SingBox.Running(), nodeName, nodeProto)
-	stoppedForReconfigure := false
-	if s.SingBox.Running() {
-		_ = s.SingBox.Stop()
-		stoppedForReconfigure = true
-	}
-	if err := singbox.WriteRouterConfig(st.SingBoxConfigPath, node, st, "tun100"); err != nil {
-		log.Printf("ensureRouter: WriteRouterConfig failed: %v", err)
-		if stoppedForReconfigure {
+	return applyCandidateConfig(ctx, st.SingBoxConfigPath, func(candidate string) error {
+		if err := singbox.WriteRouterConfig(candidate, node, st, "tun100"); err != nil {
+			return err
+		}
+		if err := singbox.ValidateWrittenConfig(candidate, st); err != nil {
+			return err
+		}
+		return singbox.ValidateConfigContext(ctx, st.SingBoxPath, candidate)
+	}, func() error {
+		if s.SingBox.Running() {
+			if err := s.SingBox.Stop(); err != nil {
+				return err
+			}
+		}
+		singbox.SnapshotWorkVPNRoutes(singbox.SystemTunIface(st))
+		if err := s.SingBox.Start(ctx); err != nil {
+			log.Printf("ensureRouter: Start failed: %v", err)
 			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
+			return err
 		}
-		return err
-	}
-	if err := singbox.ValidateWrittenConfig(st.SingBoxConfigPath, st); err != nil {
-		log.Printf("ensureRouter: ValidateWrittenConfig failed: %v", err)
-		if stoppedForReconfigure {
+		if !s.SingBox.Running() {
 			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
+			msg := s.SingBox.LastError()
+			if msg == "" {
+				msg = "sing-box не запустился"
+			}
+			log.Printf("ensureRouter: not running after Start: %s", msg)
+			return fmt.Errorf("%s", msg)
 		}
-		return err
-	}
-	singbox.SnapshotWorkVPNRoutes(singbox.SystemTunIface(st))
-	if err := s.SingBox.Start(ctx); err != nil {
-		log.Printf("ensureRouter: Start failed: %v", err)
-		singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
-		return err
-	}
-	if !s.SingBox.Running() {
-		singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
-		msg := s.SingBox.LastError()
-		if msg == "" {
-			msg = "sing-box не запустился"
-		}
-		log.Printf("ensureRouter: not running after Start: %s", msg)
-		return fmt.Errorf("%s", msg)
-	}
-	log.Printf("ensureRouter: ok mode=%s", singbox.ConfigModeFor(st))
-	return nil
+		log.Printf("ensureRouter: ok mode=%s", singbox.ConfigModeFor(st))
+		return nil
+	})
 }
 
 func (s *Server) personalDisconnect(w http.ResponseWriter, r *http.Request) {
