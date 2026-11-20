@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -209,6 +210,14 @@ func WriteRouterConfigWithSnapshot(path string, node *subscription.Node, st conf
 	if snapshot.SystemVPNUp && (snapshot.SystemInterface == "" || snapshot.SystemDNS == "" || snapshot.SystemInterface == DefaultTunIface || snapshot.SystemInterface == snapshot.MainInterface) {
 		return fmt.Errorf("системный VPN ещё не предоставил отдельный интерфейс или DNS: дождитесь подключения и повторите применение")
 	}
+	// These prefixes all select the same work outbound or exclude addresses from
+	// the TUN. OS/DNS enumeration order must not change the generated config.
+	snapshot.WorkRoutes = slices.Clone(snapshot.WorkRoutes)
+	snapshot.EndpointCIDRs = slices.Clone(snapshot.EndpointCIDRs)
+	slices.Sort(snapshot.WorkRoutes)
+	slices.Sort(snapshot.EndpointCIDRs)
+	snapshot.WorkRoutes = slices.Compact(snapshot.WorkRoutes)
+	snapshot.EndpointCIDRs = slices.Compact(snapshot.EndpointCIDRs)
 	if tunName == "" {
 		tunName = "tun100"
 	}

@@ -282,6 +282,8 @@ export interface RulesResponse {
   apps: AppRule[];
 }
 
+export type RuleAdditionStatus = "created" | "updated" | "unchanged";
+
 export interface AutoCheckResponse {
   host: string;
   rule?: DomainRule;

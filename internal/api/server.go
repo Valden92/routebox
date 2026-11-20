@@ -1125,6 +1125,7 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := uuid.NewString()
+	status := "created"
 	err := s.Store.Update(func(st *config.Settings) {
 		if req.ProcessName != "" {
 			st.AppRules = append(st.AppRules, config.AppRule{
@@ -1137,6 +1138,11 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 			pattern = req.Pattern
 		}
 		if idx := routing.FindDomainRuleIndex(st.DomainRules, pattern); idx >= 0 {
+			previous := st.DomainRules[idx]
+			status = "updated"
+			if previous.Pattern == pattern && previous.Path == req.Path && previous.Source == "manual" && previous.Enabled {
+				status = "unchanged"
+			}
 			st.DomainRules[idx].Pattern = pattern
 			st.DomainRules[idx].Path = req.Path
 			st.DomainRules[idx].Source = "manual"
@@ -1158,7 +1164,7 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "reapply_failed", err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"id": id, "reapplied": reapplied})
+	writeJSON(w, map[string]any{"id": id, "reapplied": reapplied, "status": status})
 }
 
 type updateRuleReq struct {

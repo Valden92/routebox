@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError, type DomainRule, type RulesResponse } from "./api";
 import {
   RulesController,
+  ruleAdditionMessage,
   ruleMutationError,
   setRuleButtonPending,
   type RulesView,
@@ -35,12 +36,24 @@ function fixture() {
 }
 
 describe("responsive rules actions", () => {
+  it.each([
+    ["created", "Правило добавлено"],
+    ["updated", "Правило обновлено"],
+    ["unchanged", "Правило уже существует"],
+  ] as const)("reports the actual add outcome: %s", async (status, message) => {
+    const f = fixture();
+    f.transport.add.mockResolvedValue({ status });
+    const result = await f.controller.add(rule);
+    expect(result).toBe(status);
+    expect(ruleAdditionMessage(status)).toBe(message);
+    expect(f.view().adding).toBe(false);
+  });
   it("accepts null lists from a daemon with no configured rules", async () => {
     const f = fixture();
     f.transport.load.mockResolvedValue({ domains: null, apps: null } as unknown as RulesResponse);
     await f.controller.refresh();
     expect(f.view().data).toEqual({ domains: [], apps: [] });
-    expect(await f.controller.add(rule)).toBe(true);
+    expect(await f.controller.add(rule)).toBe("created");
   });
   it("immediately locks add, rejects double submission, and stays busy through list refresh", async () => {
     const f = fixture();
@@ -57,7 +70,7 @@ describe("responsive rules actions", () => {
     await Promise.resolve();
     expect(f.view().adding).toBe(true);
     refresh.resolve(data([...data().domains, { ...first, id: "3", pattern: rule.pattern }]));
-    expect(await adding).toBe(true);
+    expect(await adding).toBe("created");
     expect(f.view().adding).toBe(false);
     expect(f.view().data!.domains).toHaveLength(3);
   });
@@ -68,7 +81,7 @@ describe("responsive rules actions", () => {
     f.transport.add.mockRejectedValueOnce(new Error("offline"));
     await expect(f.controller.add(rule)).rejects.toThrow("offline");
     expect(f.view().adding).toBe(false);
-    expect(await f.controller.add(rule)).toBe(true);
+    expect(await f.controller.add(rule)).toBe("created");
   });
 
   it("hides delete immediately, updates counts, and ignores duplicate clicks", async () => {
