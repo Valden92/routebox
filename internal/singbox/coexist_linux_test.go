@@ -34,7 +34,7 @@ func TestWriteConfigCoexistHasHijackAndIsolation(t *testing.T) {
 	cfg := map[string]any{
 		"inbounds":  []map[string]any{tunInbound},
 		"outbounds": []any{outbound, buildDirectOutbound(st), map[string]any{"type": "direct", "tag": "work", "bind_interface": sysIface}},
-		"route":     buildRoute(st, &node, sysUp, sysIface),
+		"route":     buildRoute(st, &node, sysUp, nil),
 	}
 	b, _ := json.Marshal(cfg)
 	if err := os.WriteFile(path, b, 0o600); err != nil {

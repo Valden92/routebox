@@ -7,7 +7,23 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Valden92/routebox/internal/config"
+	"github.com/Valden92/routebox/internal/singbox"
 )
+
+func TestIncompleteNetworkSnapshotPreservesRouter(t *testing.T) {
+	f := newRollbackFixture(t, true, true)
+	st := config.DefaultSettings(filepath.Dir(f.path))
+	snapshot := singbox.RouterNetworkSnapshot{SystemVPNUp: true, SystemInterface: "tun9"}
+	err := applyRouterConfig(context.Background(), f.path, func(candidate string) error {
+		return singbox.WriteRouterConfigWithSnapshot(candidate, nil, st, "tun100", snapshot)
+	}, f.runtime)
+	if err == nil || len(f.events) != 0 || !f.alive {
+		t.Fatalf("incomplete snapshot changed runtime: %v %v", err, f.events)
+	}
+	assertRollbackFile(t, f.path, "old")
+}
 
 type rollbackFixture struct {
 	path                                 string
