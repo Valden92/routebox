@@ -29,7 +29,10 @@ function version(value?: string): string {
   return value ? escapeHtml(value.slice(0, 12)) : "Не подтверждена";
 }
 
-export function renderConfigurationState(state?: RouterConfigurationState): string {
+export function renderConfigurationState(
+  state?: RouterConfigurationState,
+  expanded = false,
+): string {
   if (!state) return "";
   const status = phases[state.phase] ?? phases.unknown;
   const pending = state.matchesSavedSettings === false;
@@ -40,7 +43,9 @@ export function renderConfigurationState(state?: RouterConfigurationState): stri
     : state.matchesSavedSettings === true
       ? "Сохранённые настройки соответствуют подтверждённой версии."
       : "Соответствие сохранённым настройкам ещё не подтверждено.";
-  return `<div class="router-configuration">
+  return `<details class="router-configuration"${expanded ? " open" : ""}>
+    <summary>Диагностика конфигурации</summary>
+    <p class="muted">Здесь видно, какая конфигурация сейчас работает и применены ли сохранённые настройки. При ошибке показан результат восстановления предыдущей версии.</p>
     <p class="${tone}">${escapeHtml(status)}</p>
     <dl>
       <dt>Работающая версия</dt><dd>${state.running ? version(state.appliedVersion) : "Маршрутизатор выключен"}</dd>
@@ -50,5 +55,5 @@ export function renderConfigurationState(state?: RouterConfigurationState): stri
     </dl>
     <p class="${pending ? "err" : "muted"}">${saved}</p>
     ${state.error ? `<p class="err">${escapeHtml(state.error)}</p>` : ""}
-  </div>`;
+  </details>`;
 }

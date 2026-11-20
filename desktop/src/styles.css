@@ -43,6 +43,22 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.router-configuration > summary {
+  cursor: pointer;
+  padding: 0.35rem 0;
+  font-weight: 500;
+}
+
+.router-configuration > summary:hover {
+  color: var(--accent);
+}
+
+.router-configuration > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
 .brand-title {
   background: linear-gradient(
     110deg,

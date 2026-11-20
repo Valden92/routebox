@@ -21,6 +21,25 @@ describe("router configuration diagnostics", () => {
     expect(renderConfigurationState()).toBe("");
   });
 
+  it("starts collapsed and includes a short explanation", () => {
+    const html = renderConfigurationState(state());
+    expect(html).toContain('<details class="router-configuration">');
+    expect(html).toContain("<summary>Диагностика конфигурации</summary>");
+    expect(html).toContain("какая конфигурация сейчас работает");
+    expect(html).toContain("применены ли сохранённые настройки");
+  });
+
+  it("keeps the chosen expansion state when status content changes", () => {
+    const updated = state({ phase: "preparing", desiredVersion: "aaaaaaaaaaaa" });
+    expect(renderConfigurationState(updated, true)).toContain(
+      '<details class="router-configuration" open>',
+    );
+    expect(renderConfigurationState(updated, true)).toContain("Подготовка и проверка");
+    expect(renderConfigurationState(updated, false)).toContain(
+      '<details class="router-configuration">',
+    );
+  });
+
   it("shows confirmed versions, safe reason and saved settings status", () => {
     const html = renderConfigurationState(state());
     expect(html).toContain("Последнее применение успешно");

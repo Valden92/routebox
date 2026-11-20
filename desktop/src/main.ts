@@ -434,7 +434,7 @@ async function refreshStatus() {
       <dt>Наблюдение</dt><dd>${badge(Boolean(s.personalVpn.routingRunning), "Активно", "Не активно")}</dd>
     </dl>
     <p class="muted">${escapeHtml(routerModeHint(s.personalVpn.configMode))}</p>
-    ${renderConfigurationState(s.personalVpn.configuration)}
+    ${renderConfigurationState(s.personalVpn.configuration, el("#card-router .card-body").querySelector<HTMLDetailsElement>("details.router-configuration")?.open)}
     ${!s.personalVpn.routingRunning && pvErr ? `<p class="err">${escapeHtml(pvErr)}</p>` : ""}
   `;
   const cfgBadge = badge(ready, "Настроен", "Не настроен");
