@@ -418,7 +418,8 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 	}
 	log.Printf("ensureRouter: personalEnabled=%v sysVPN=%v wasRunning=%v node=%q proto=%s",
 		st.PersonalVPN.Enabled, singbox.SystemVPNUp(st), s.SingBox.Running(), nodeName, nodeProto)
-	return applyCandidateConfig(ctx, st.SingBoxConfigPath, func(candidate string) error {
+	runtimeTouched := false
+	err := applyRouterConfig(ctx, st.SingBoxConfigPath, func(candidate string) error {
 		if err := singbox.WriteRouterConfig(candidate, node, st, "tun100"); err != nil {
 			return err
 		}
@@ -426,30 +427,30 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 			return err
 		}
 		return singbox.ValidateConfigContext(ctx, st.SingBoxPath, candidate)
-	}, func() error {
-		if s.SingBox.Running() {
-			if err := s.SingBox.Stop(); err != nil {
-				return err
-			}
-		}
-		singbox.SnapshotWorkVPNRoutes(singbox.SystemTunIface(st))
-		if err := s.SingBox.Start(ctx); err != nil {
-			log.Printf("ensureRouter: Start failed: %v", err)
-			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
-			return err
-		}
-		if !s.SingBox.Running() {
-			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
-			msg := s.SingBox.LastError()
-			if msg == "" {
-				msg = "sing-box не запустился"
-			}
-			log.Printf("ensureRouter: not running after Start: %s", msg)
-			return fmt.Errorf("%s", msg)
-		}
-		log.Printf("ensureRouter: ok mode=%s", singbox.ConfigModeFor(st))
-		return nil
+	}, routerRuntime{
+		running: s.SingBox.Running,
+		stop: func() error {
+			runtimeTouched = true
+			return s.SingBox.Stop()
+		},
+		start: func(startCtx context.Context) error {
+			runtimeTouched = true
+			singbox.SnapshotWorkVPNRoutes(singbox.SystemTunIface(st))
+			return s.SingBox.Start(startCtx)
+		},
+		ready: func(readyCtx context.Context) error {
+			return singbox.WaitClashAPI(readyCtx, singbox.ClashAPIAddr)
+		},
 	})
+	if err != nil {
+		log.Printf("ensureRouter: %v", err)
+		if runtimeTouched && !s.SingBox.Running() {
+			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
+		}
+		return err
+	}
+	log.Printf("ensureRouter: ok mode=%s", singbox.ConfigModeFor(st))
+	return nil
 }
 
 func (s *Server) personalDisconnect(w http.ResponseWriter, r *http.Request) {
