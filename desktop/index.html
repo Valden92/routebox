@@ -164,6 +164,13 @@
       </section>
 
       <section id="tab-rules" class="panel">
+        <label>
+          <input type="checkbox" id="auto-routing-enabled" disabled />
+          Автоматически запоминать маршруты открываемых сайтов
+        </label>
+        <p id="auto-routing-status" class="muted" role="status" aria-live="polite">
+          Загрузка настройки…
+        </p>
         <form id="form-auto-rule" class="inline-form">
           <input name="url" placeholder="Сайт для авто-проверки: web.telegram.org" required />
           <button type="submit" id="btn-auto-rule">Проверить и запомнить</button>

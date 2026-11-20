@@ -44,6 +44,8 @@ type Server struct {
 	autoSelectJobs    sync.Map   // jobId → *autoSelectJob
 	autoSelectMu      sync.Mutex // probe jobs share ports and a config file
 	fetchSubscription func(context.Context, string) (subscription.FetchResult, error)
+	// Test fixture; nil uses the production site probe below.
+	siteReport func(context.Context, string) probe.SiteReport
 }
 
 func NewServer(store *config.Store, sb *singbox.Manager) *Server {
@@ -200,7 +202,7 @@ func (s *Server) routes() {
 	s.router = r
 }
 
-const apiVersion = 6
+const apiVersion = 7
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -272,7 +274,16 @@ func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
-	var st config.Settings
+	// Omitted fields preserve saved state, including subscriptions and rules.
+	var st struct {
+		MainInterface     string                 `json:"mainInterface"`
+		SystemVPN         *config.SystemVPN      `json:"systemVpn"`
+		PersonalVPN       *config.PersonalVPN    `json:"personalVpn"`
+		AutoDetectRouting *bool                  `json:"autoDetectRouting"`
+		DomainRules       *[]config.DomainRule   `json:"domainRules"`
+		AppRules          *[]config.AppRule      `json:"appRules"`
+		Subscriptions     *[]config.Subscription `json:"subscriptions"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&st); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
@@ -281,15 +292,24 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		if st.MainInterface != "" {
 			cur.MainInterface = st.MainInterface
 		}
-		if st.SystemVPN.NMConnectionID != "" {
-			cur.SystemVPN = st.SystemVPN
+		if st.SystemVPN != nil && st.SystemVPN.NMConnectionID != "" {
+			cur.SystemVPN = *st.SystemVPN
 		}
-		cur.PersonalVPN = st.PersonalVPN
-		cur.DefaultPath = st.DefaultPath
-		cur.AutoDetectRouting = st.AutoDetectRouting
-		cur.DomainRules = st.DomainRules
-		cur.AppRules = st.AppRules
-		cur.Subscriptions = st.Subscriptions
+		if st.PersonalVPN != nil {
+			cur.PersonalVPN = *st.PersonalVPN
+		}
+		if st.AutoDetectRouting != nil {
+			cur.AutoDetectRouting = *st.AutoDetectRouting
+		}
+		if st.DomainRules != nil {
+			cur.DomainRules = *st.DomainRules
+		}
+		if st.AppRules != nil {
+			cur.AppRules = *st.AppRules
+		}
+		if st.Subscriptions != nil {
+			cur.Subscriptions = *st.Subscriptions
+		}
 	})
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -1231,7 +1251,7 @@ func (s *Server) autoCheckRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	resp, err := s.autoLearnHost(r.Context(), req.URL, true)
+	resp, err := s.autoLearnHost(r.Context(), req.URL, true, false)
 	if err != nil {
 		if err == errEmptyHost {
 			http.Error(w, "empty host", 400)
@@ -1282,6 +1302,9 @@ func (s *Server) probeSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) checkSiteReport(ctx context.Context, rawURL string) probe.SiteReport {
+	if s.siteReport != nil {
+		return s.siteReport(ctx, rawURL)
+	}
 	st := s.Store.Get()
 	sys := nm.Status(ctx, st.SystemVPN.NMConnectionID)
 	sysIface := sys.Interface
@@ -1313,10 +1336,13 @@ func (s *Server) reapplyPersonalIfRunning(ctx context.Context) (bool, error) {
 
 var errEmptyHost = errors.New("empty host")
 
-func (s *Server) autoLearnHost(ctx context.Context, raw string, allowReapply bool) (autoCheckResp, error) {
+func (s *Server) autoLearnHost(ctx context.Context, raw string, allowReapply, background bool) (autoCheckResp, error) {
 	host := routing.NormalizeRulePattern(raw)
 	if host == "" {
 		return autoCheckResp{}, errEmptyHost
+	}
+	if background && !s.Store.Get().AutoDetectRouting {
+		return autoCheckResp{Host: host}, nil
 	}
 	report := s.checkSiteReport(ctx, host)
 	best, hasBest := probe.BestAvailablePath(report)
@@ -1331,6 +1357,10 @@ func (s *Server) autoLearnHost(ctx context.Context, raw string, allowReapply boo
 	var rule config.DomainRule
 	var ruleFound bool
 	err := s.Store.Update(func(cur *config.Settings) {
+		// A probe can finish after background learning has been switched off.
+		if background && (!cur.AutoDetectRouting || ctx.Err() != nil) {
+			return
+		}
 		idx := routing.FindDomainRuleIndex(cur.DomainRules, host)
 		if idx >= 0 {
 			ruleFound = true
@@ -1392,7 +1422,7 @@ func (s *Server) autoLearnHost(ctx context.Context, raw string, allowReapply boo
 		resp.Message = "Домен недоступен по доступным сейчас путям"
 		return resp, nil
 	}
-	if reapplyNeeded && allowReapply {
+	if reapplyNeeded && allowReapply && (!background || s.Store.Get().AutoDetectRouting) {
 		reapplied, err := s.reapplyPersonalIfRunning(ctx)
 		if err != nil {
 			return resp, fmt.Errorf("reapply failed: %w", err)
@@ -1410,6 +1440,9 @@ func (s *Server) passiveLearnWorkHost(raw string) (bool, error) {
 	now := time.Now()
 	changed := false
 	err := s.Store.Update(func(cur *config.Settings) {
+		if !cur.AutoDetectRouting {
+			return
+		}
 		idx := routing.FindDomainRuleIndex(cur.DomainRules, host)
 		if idx >= 0 {
 			r := &cur.DomainRules[idx]
@@ -1487,7 +1520,7 @@ func (s *Server) reapplyIfConfigModeChanged() {
 }
 
 func (s *Server) observeTraffic() {
-	if !s.SingBox.Running() {
+	if !s.Store.Get().AutoDetectRouting || !s.SingBox.Running() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1499,11 +1532,14 @@ func (s *Server) observeTraffic() {
 	hosts = routing.UniqueHosts(hosts)
 	checked := 0
 	for _, host := range hosts {
+		if !s.Store.Get().AutoDetectRouting {
+			return
+		}
 		if !s.shouldAutoCheckObservedHost(host) {
 			continue
 		}
 		checkCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
-		_, _ = s.autoLearnHost(checkCtx, host, true)
+		_, _ = s.autoLearnHost(checkCtx, host, true, true)
 		cancel()
 		checked++
 		if checked >= 3 {
@@ -1511,7 +1547,11 @@ func (s *Server) observeTraffic() {
 		}
 	}
 
-	sys := nm.Status(context.Background(), s.Store.Get().SystemVPN.NMConnectionID)
+	st := s.Store.Get()
+	if !st.AutoDetectRouting {
+		return
+	}
+	sys := nm.Status(context.Background(), st.SystemVPN.NMConnectionID)
 	if sys.Connected {
 		for _, host := range routing.UniqueHosts(observedBrowserHistoryHosts()) {
 			if !routing.IsCorpHost(host) || !s.shouldAutoCheckObservedHost(host) {
@@ -1620,6 +1660,9 @@ func (s *Server) shouldAutoCheckObservedHost(host string) bool {
 	const minInterval = 10 * time.Minute
 	now := time.Now()
 	st := s.Store.Get()
+	if !st.AutoDetectRouting {
+		return false
+	}
 	if node, err := s.selectedNode(st); err == nil && strings.EqualFold(host, node.Host) {
 		return false
 	}

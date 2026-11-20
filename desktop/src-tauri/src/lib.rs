@@ -8,7 +8,7 @@ use tauri::Manager;
 
 const API_ADDR: &str = "127.0.0.1:47891";
 /// Согласовано с desktop/src/status-ui.ts (MIN_API_VERSION).
-const MIN_API_VERSION: u64 = 6;
+const MIN_API_VERSION: u64 = 7;
 
 struct DaemonState(Mutex<Option<Child>>);
 

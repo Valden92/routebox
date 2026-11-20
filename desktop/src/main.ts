@@ -32,6 +32,7 @@ import {
 } from "./qr-import";
 import { formatPing } from "./ping-label";
 import { AutoSelectSession } from "./autoselect-session";
+import { AutoRoutingController, autoRoutingStatus, autoRoutingTransport } from "./auto-routing";
 import { ModalLifecycle } from "./modal-lifecycle";
 import { RulesController, ruleMutationError, setRuleButtonPending } from "./rules-controller";
 import { orderNodes, retainPingsForNodes } from "./nodes-sort";
@@ -1226,6 +1227,13 @@ function loadRules(force = false): Promise<void> {
   return rulesController.refresh(force);
 }
 
+const autoRoutingController = new AutoRoutingController(autoRoutingTransport(), (view) => {
+  const input = el<HTMLInputElement>("#auto-routing-enabled");
+  input.checked = view.enabled === true;
+  input.disabled = view.pending || view.enabled === null;
+  el("#auto-routing-status").textContent = autoRoutingStatus(view);
+});
+
 function setupTabs() {
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -1233,6 +1241,7 @@ function setupTabs() {
       switchTab(name);
       if (name === "rules") {
         void loadRules();
+        void autoRoutingController.refresh();
       }
     });
   });
@@ -1264,6 +1273,14 @@ async function checkApiVersion() {
 
 window.addEventListener("DOMContentLoaded", () => {
   setupTabs();
+
+  el<HTMLInputElement>("#auto-routing-enabled").addEventListener("change", async (event) => {
+    try {
+      await autoRoutingController.setEnabled((event.target as HTMLInputElement).checked);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Не удалось сохранить настройку", true);
+    }
+  });
 
   el("#modal-close").addEventListener("click", closeModal);
   el("#modal-overlay").addEventListener("click", (e) => {
