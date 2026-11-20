@@ -162,6 +162,9 @@ func (l *liveRouterRules) publish(ctx context.Context, st config.Settings, valid
 func (s *Server) publishLiveRules(ctx context.Context, reason string) (bool, error) {
 	s.autoMu.Lock()
 	defer s.autoMu.Unlock()
+	if s.stopRequested.Load() {
+		return false, errors.New("демон завершает работу")
+	}
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}

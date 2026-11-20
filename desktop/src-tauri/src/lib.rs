@@ -1,16 +1,14 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Command, Stdio};
 use std::time::Duration;
-use tauri::Manager;
 
 const API_ADDR: &str = "127.0.0.1:47891";
 /// Согласовано с desktop/src/status-ui.ts (MIN_API_VERSION).
 const MIN_API_VERSION: u64 = 7;
 
-struct DaemonState(Mutex<Option<Child>>);
+const DAEMON_SERVICE: &str = "routebox-daemon.service";
 
 fn read_api_token(path: &std::path::Path) -> Result<String, String> {
     let metadata = std::fs::symlink_metadata(path).map_err(|_| "API credential unavailable")?;
@@ -152,9 +150,11 @@ fn api_health_ok() -> bool {
 
 /// true = можно пользоваться; false = порта нет / мёртвый процесс.
 /// None version при живом health — не считаем «устаревшим» (флейк парсинга).
+#[derive(Clone, Copy)]
 enum ApiProbe {
     Ok,
     Outdated(u64),
+    Unresponsive,
     Down,
 }
 
@@ -188,23 +188,31 @@ fn probe_api() -> ApiProbe {
         }
         std::thread::sleep(Duration::from_millis(150));
     }
-    ApiProbe::Down
+    ApiProbe::Unresponsive
 }
 
-fn stop_stale_daemon() {
-    let _ = Command::new("killall")
-        .arg("vpn-router-daemon")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    // Дождаться освобождения порта (иначе новый процесс не займёт :47891).
-    for _ in 0..40 {
-        if !api_running() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
+#[derive(Debug, PartialEq, Eq)]
+enum StartupAction {
+    Attach,
+    KeepExisting,
+    StartService,
+    SpawnDetached,
+}
+
+fn startup_action(probe: ApiProbe, service_installed: bool) -> StartupAction {
+    match probe {
+        ApiProbe::Ok => StartupAction::Attach,
+        ApiProbe::Outdated(_) | ApiProbe::Unresponsive => StartupAction::KeepExisting,
+        ApiProbe::Down if service_installed => StartupAction::StartService,
+        ApiProbe::Down => StartupAction::SpawnDetached,
     }
-    std::thread::sleep(Duration::from_millis(200));
+}
+
+fn service_installed() -> bool {
+    config_dir()
+        .parent()
+        .map(|base| base.join("systemd/user").join(DAEMON_SERVICE).is_file())
+        .unwrap_or(false)
 }
 
 fn daemon_log_path() -> PathBuf {
@@ -212,84 +220,88 @@ fn daemon_log_path() -> PathBuf {
 }
 
 fn config_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        let p = PathBuf::from(home).join(".config/vpn-router");
-        let _ = std::fs::create_dir_all(&p);
-        return p;
-    }
-    PathBuf::from(".")
+    let path = api_token_path(
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        std::env::var_os("HOME").map(PathBuf::from),
+    )
+    .ok()
+    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+    .unwrap_or_else(|| PathBuf::from("."));
+    let _ = std::fs::create_dir_all(&path);
+    path
 }
 
-fn ensure_daemon() -> Option<Child> {
-    match probe_api() {
-        ApiProbe::Ok => {
-            eprintln!("vpn-router: API ok (version {MIN_API_VERSION}+) at http://{API_ADDR}");
-            return None;
-        }
-        ApiProbe::Outdated(v) => {
-            eprintln!(
-                "vpn-router: устаревший демон apiVersion={v} (нужен {MIN_API_VERSION}+) — перезапускаем"
-            );
-            stop_stale_daemon();
-        }
-        ApiProbe::Down => {}
-    }
-
-    let path = daemon_path();
-    if !path.exists() {
-        eprintln!("vpn-router: не найден бинарник демона: {}", path.display());
-        return None;
-    }
-
-    let log_path = daemon_log_path();
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .ok();
-
-    let mut cmd = Command::new(&path);
-    cmd.args(["--listen", API_ADDR]);
-    cmd.stdout(Stdio::null());
-    if let Some(f) = log_file {
-        cmd.stderr(Stdio::from(f));
-    } else {
-        cmd.stderr(Stdio::null());
-    }
-    for (key, value) in std::env::vars() {
-        cmd.env(key, value);
-    }
-
-    match cmd.spawn() {
-        Ok(child) => {
-            // до ~15 с: холодный старт Go / медленный диск
-            for i in 0..75 {
-                match probe_api() {
-                    ApiProbe::Ok => {
-                        eprintln!("vpn-router: демон запущен http://{API_ADDR}");
-                        return Some(child);
-                    }
-                    ApiProbe::Outdated(v) => {
-                        eprintln!(
-                            "vpn-router: демон поднялся со старым apiVersion={v}, ждём/пересоберьте make build"
-                        );
-                    }
-                    ApiProbe::Down => {}
-                }
-                if i == 20 {
-                    eprintln!("vpn-router: ждём ответ API… (лог: {})", log_path.display());
-                }
-                std::thread::sleep(Duration::from_millis(200));
+fn wait_for_daemon() {
+    for _ in 0..75 {
+        match probe_api() {
+            ApiProbe::Ok => {
+                eprintln!("vpn-router: API готов http://{API_ADDR}");
+                return;
             }
-            eprintln!(
-                "vpn-router: демон не ответил /api/version за 15с — см. {}",
-                log_path.display()
-            );
-            Some(child)
+            ApiProbe::Outdated(_) | ApiProbe::Unresponsive => {
+                eprintln!("vpn-router: порт занят, но совместимость API не подтверждена; процесс сохранён");
+                return;
+            }
+            ApiProbe::Down => {}
         }
-        Err(e) => {
-            eprintln!("vpn-router: не удалось запустить демон: {e}");
-            None
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    eprintln!(
+        "vpn-router: API не подтвердил готовность; см. журнал сервиса или {}",
+        daemon_log_path().display()
+    );
+}
+
+fn ensure_daemon() {
+    let probe = probe_api();
+    match startup_action(probe, service_installed()) {
+        StartupAction::Attach => {
+            eprintln!("vpn-router: API ok at http://{API_ADDR}");
+        }
+        StartupAction::KeepExisting => {
+            if let ApiProbe::Outdated(v) = probe {
+                eprintln!("vpn-router: API {v} устарел (нужен {MIN_API_VERSION}+). Обновите демон вручную; UI не останавливает работающую сеть.");
+            } else {
+                eprintln!("vpn-router: порт API занят, готовность не подтверждена. Работающий процесс сохранён.");
+            }
+        }
+        StartupAction::StartService => {
+            match Command::new("systemctl").args(["--user", "start", "--no-block", DAEMON_SERVICE]).status() {
+                Ok(status) if status.success() => wait_for_daemon(),
+                _ => eprintln!("vpn-router: не удалось запустить пользовательский сервис; выполните make service-status"),
+            }
+        }
+        StartupAction::SpawnDetached => {
+            let path = daemon_path();
+            if !path.exists() {
+                eprintln!("vpn-router: не найден демон: {}", path.display());
+                return;
+            }
+            let mut cmd = Command::new(&path);
+            cmd.args(["--listen", API_ADDR])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null());
+            let log = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(daemon_log_path());
+            cmd.stderr(log.map(Stdio::from).unwrap_or_else(|_| Stdio::null()));
+            // A UI/terminal process group must not own the router's lifetime.
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                cmd.process_group(0);
+            }
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    // Reap an eventual exit without installing any kill-on-window-close hook.
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                    wait_for_daemon();
+                }
+                Err(error) => eprintln!("vpn-router: не удалось запустить демон: {error}"),
+            }
         }
     }
 }
@@ -299,21 +311,9 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![local_api_token])
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
-            let child = ensure_daemon();
-            app.manage(DaemonState(Mutex::new(child)));
+        .setup(|_| {
+            ensure_daemon();
             Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                if let Some(state) = window.app_handle().try_state::<DaemonState>() {
-                    if let Ok(mut guard) = state.0.lock() {
-                        if let Some(mut child) = guard.take() {
-                            let _ = child.kill();
-                        }
-                    }
-                }
-            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -390,5 +390,40 @@ mod credential_tests {
         assert!(read_api_token(&link).is_err());
         std::fs::remove_file(&path).unwrap();
         assert!(read_api_token(&path).is_err());
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{startup_action, ApiProbe, StartupAction};
+
+    #[test]
+    fn ui_never_replaces_a_healthy_old_or_unresponsive_owner() {
+        for installed in [false, true] {
+            assert_eq!(
+                startup_action(ApiProbe::Ok, installed),
+                StartupAction::Attach
+            );
+            assert_eq!(
+                startup_action(ApiProbe::Outdated(1), installed),
+                StartupAction::KeepExisting
+            );
+            assert_eq!(
+                startup_action(ApiProbe::Unresponsive, installed),
+                StartupAction::KeepExisting
+            );
+        }
+    }
+
+    #[test]
+    fn starts_service_only_when_api_is_absent_and_service_is_installed() {
+        assert_eq!(
+            startup_action(ApiProbe::Down, true),
+            StartupAction::StartService
+        );
+        assert_eq!(
+            startup_action(ApiProbe::Down, false),
+            StartupAction::SpawnDetached
+        );
     }
 }

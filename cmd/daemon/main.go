@@ -15,10 +15,21 @@ import (
 
 	"github.com/Valden92/routebox/internal/api"
 	"github.com/Valden92/routebox/internal/config"
+	"github.com/Valden92/routebox/internal/daemonlock"
 	"github.com/Valden92/routebox/internal/singbox"
 )
 
 func main() {
+	if err := runDaemon(); err != nil {
+		log.Print(err)
+		if errors.Is(err, daemonlock.ErrHeld) {
+			os.Exit(73)
+		}
+		os.Exit(1)
+	}
+}
+
+func runDaemon() error {
 	var (
 		dataDir = flag.String("data", defaultDataDir(), "config data directory")
 		listen  = flag.String("listen", "127.0.0.1:47891", "API listen address")
@@ -27,22 +38,31 @@ func main() {
 	flag.Parse()
 
 	if err := api.ValidateListenAddress(*listen); err != nil {
-		log.Fatal(err)
+		return err
 	}
+	// One owner per user, independent of --data/--listen. The lock precedes
+	// every credential/settings write, network probe and routing worker.
+	owner, err := daemonlock.Acquire(daemonlock.Path())
+	if err != nil {
+		return err
+	}
+	defer owner.Close()
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 	// Bind before publishing a new credential or starting routing workers.
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer listener.Close()
 	access, err := api.NewLocalAccess(defaultDataDir())
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	store, err := initializeStore(*dataDir, *listen, *unlock)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	st := store.Get()
@@ -51,6 +71,9 @@ func main() {
 		log.Printf("WARN: личный VPN недоступен — выполните: make sync (setcap + NetworkManager)")
 	}
 	sb := singbox.NewManager(bin, st.SingBoxConfigPath)
+	if ctx.Err() != nil {
+		return nil
+	}
 	srv := api.NewServer(store, sb)
 
 	httpServer := &http.Server{
@@ -59,20 +82,29 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	go func() {
-		log.Printf("vpn-router API listening on %s", *listen)
-		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
-		}
-	}()
+	log.Printf("vpn-router API listening on %s", *listen)
+	return serveUntilStopped(ctx, httpServer, listener, srv.StopRouter)
+}
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// A failed listener uses the same graceful cleanup as an explicit stop.
+func serveUntilStopped(ctx context.Context, server *http.Server, listener net.Listener, stop func()) error {
+	defer stop()
+	result := make(chan error, 1)
+	go func() { result <- server.Serve(listener) }()
+	var serveErr error
+	select {
+	case <-ctx.Done():
+	case serveErr = <-result:
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	srv.StopRouter()
-	_ = httpServer.Shutdown(ctx)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		_ = server.Close()
+	}
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		return nil
+	}
+	return serveErr
 }
 
 // initializeStore never writes defaults over settings awaiting a password.

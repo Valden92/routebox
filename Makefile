@@ -23,6 +23,7 @@ SYNC_SCRIPT  := $(ROOT)/scripts/sync-deps.sh
 # Dev checkout shares the host network even when its source tree is separate.
 DEV_CHECKOUT := $(shell git -C "$(ROOT)" config --bool vpnrouter.development 2>/dev/null)
 NETWORK_GOALS := all dev run dev-full daemon daemon-fg desktop stop restart sync \
+	service-install service-start service-restart service-stop \
 	deps deps-apt sync-go sync-node sync-rust install-sing-box setcap-sing-box configure-host \
 	reset-host reset-host-wipe recover-network
 ifeq ($(DEV_CHECKOUT),true)
@@ -87,31 +88,40 @@ recover-network:
 	@chmod +x $(ROOT)/scripts/recover-network.sh
 	@$(ROOT)/scripts/recover-network.sh
 
+# An installed service is updated/restarted only by an explicit make invocation.
+# Without opting in, keep the existing foreground/development workflow.
 daemon: build
-	-$(MAKE) stop
-	@sleep 0.2
-	@VPN_ROUTER_ROOT="$(ROOT)" "$(DAEMON)" --listen $(API_ADDR) & \
-	echo $$! > "$(PID_FILE)"; \
-	sleep 0.3; \
-	echo "daemon started on http://$(API_ADDR) (pid $$(cat "$(PID_FILE)"))"
+	@if node "$(ROOT)/scripts/daemon-service.mjs" installed; then \
+		$(MAKE) stop && \
+		node "$(ROOT)/scripts/daemon-service.mjs" install "$(DAEMON)" && \
+		node "$(ROOT)/scripts/daemon-service.mjs" restart; \
+	else \
+		$(MAKE) stop && sleep 0.2 && \
+		(umask 077; VPN_ROUTER_ROOT="$(ROOT)" setsid "$(DAEMON)" --listen $(API_ADDR) </dev/null >/dev/null 2>>"$(ROOT)/bin/daemon-boot.log" & echo $$! > "$(PID_FILE)"); \
+	fi
 
 daemon-fg: build
 	"$(DAEMON)" --listen $(API_ADDR)
 
 stop:
-	@if [ -f "$(PID_FILE)" ]; then \
-		pid=$$(cat "$(PID_FILE)" 2>/dev/null); \
-		if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
-			kill "$$pid" 2>/dev/null && echo "stopping pid $$pid" || true; \
-			for i in {1..50}; do \
-				kill -0 "$$pid" 2>/dev/null || break; \
-				sleep 0.1; \
-			done; \
-		fi; \
-		rm -f "$(PID_FILE)"; \
+	@if node "$(ROOT)/scripts/daemon-service.mjs" installed; then \
+		node "$(ROOT)/scripts/daemon-service.mjs" stop || exit $$?; \
 	fi
-	@(killall sing-box 2>/dev/null || pkill -x sing-box 2>/dev/null) && echo "stopped sing-box" || true
-	@(killall vpn-router-daemon 2>/dev/null || true) && echo "stopped vpn-router-daemon" || true
+	@node "$(ROOT)/scripts/stop-daemon.mjs" "$(ROOT)"
+
+.PHONY: service-install service-start service-restart service-stop service-status test-daemon-lifecycle
+service-install: build
+	node "$(ROOT)/scripts/daemon-service.mjs" install "$(DAEMON)"
+service-start: service-install
+	node "$(ROOT)/scripts/daemon-service.mjs" start
+service-restart: service-install
+	node "$(ROOT)/scripts/daemon-service.mjs" restart
+service-stop:
+	node "$(ROOT)/scripts/daemon-service.mjs" stop
+service-status:
+	node "$(ROOT)/scripts/daemon-service.mjs" status
+test-daemon-lifecycle:
+	node --test $(ROOT)/scripts/daemon-service.test.mjs $(ROOT)/scripts/stop-daemon.test.mjs
 
 restart: stop daemon
 
@@ -133,7 +143,7 @@ lint-tools:
 
 lint: lint-go lint-ui
 
-test: test-go test-ui test-development
+test: test-go test-ui test-development test-daemon-lifecycle
 
 test-go:
 	cd $(ROOT) && $(GO) test ./tests/... ./internal/... ./cmd/...
@@ -196,7 +206,9 @@ help:
 	@echo "  make dev-full — sync + dev (рекомендуется новому пользователю)"
 	@echo "  make daemon   — только API http://$(API_ADDR)"
 	@echo "  make desktop  — только UI"
-	@echo "  make stop     — остановить демон"
+	@echo "  make stop     — корректно остановить только свой демон"
+	@echo "  make service-install — установить пользовательский systemd-сервис без запуска"
+	@echo "  make service-start / service-restart / service-stop / service-status"
 	@echo "  make build    — собрать демон"
 	@echo "  make lint     — Go (golangci) + ESLint"
 	@echo "  make lint-rust — clippy (Tauri; тяжёлый, в CI отдельно по paths)"
