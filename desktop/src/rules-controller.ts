@@ -1,4 +1,4 @@
-import { ApiError, type RoutePath, type RulesResponse } from "./api";
+import { ApiError, type RoutePath, type RulesResponse, type RuleAdditionStatus } from "./api";
 
 export interface NewRule {
   pattern: string;
@@ -70,16 +70,16 @@ export class RulesController {
     } while (this.reloadRequested);
   }
 
-  async add(rule: NewRule): Promise<boolean> {
+  async add(rule: NewRule): Promise<RuleAdditionStatus | false> {
     if (this.adding) return false;
     this.adding = true;
     this.revision++;
     this.emit();
     try {
-      await this.transport.add(rule);
+      const status = ruleAdditionStatus(await this.transport.add(rule));
       this.revision++;
       await this.refresh(true);
-      return true;
+      return status;
     } catch (error) {
       // Saving can succeed before reapply fails; reconcile instead of guessing.
       await this.refresh(true).catch(() => {});
@@ -120,6 +120,21 @@ export class RulesController {
       this.data = { ...this.data, domains: this.data.domains.filter((rule) => rule.id !== id) };
     }
   }
+}
+
+function ruleAdditionStatus(result: unknown): RuleAdditionStatus {
+  if (result && typeof result === "object" && "status" in result) {
+    if (result.status === "updated" || result.status === "unchanged") return result.status;
+  }
+  return "created";
+}
+
+export function ruleAdditionMessage(status: RuleAdditionStatus): string {
+  return {
+    created: "Правило добавлено",
+    updated: "Правило обновлено",
+    unchanged: "Правило уже существует",
+  }[status];
 }
 
 export function setRuleButtonPending(button: HTMLButtonElement, pending: boolean): void {

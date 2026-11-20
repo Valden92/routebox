@@ -6,6 +6,7 @@ const phases: Record<RouterConfigurationState["phase"], string> = {
   preparing: "Подготовка и проверка новой конфигурации",
   applying: "Применение и проверка готовности",
   applied: "Последнее применение успешно",
+  rules_published: "Правила обновлены без перезапуска VPN",
   rejected: "Новая конфигурация отклонена",
   rolling_back: "Восстановление предыдущей версии",
   rolled_back: "Предыдущая рабочая версия восстановлена",
@@ -34,7 +35,9 @@ export function renderConfigurationState(
   expanded = false,
 ): string {
   if (!state) return "";
-  const status = phases[state.phase] ?? phases.unknown;
+  const status = state.unchanged
+    ? "Конфигурация не изменилась — перезапуск не потребовался"
+    : (phases[state.phase] ?? phases.unknown);
   const pending = state.matchesSavedSettings === false;
   const failed = ["rejected", "rolled_back", "rollback_failed", "failed"].includes(state.phase);
   const tone = failed || pending ? "err" : "muted";
@@ -50,10 +53,11 @@ export function renderConfigurationState(
     <dl>
       <dt>Работающая версия</dt><dd>${state.running ? version(state.appliedVersion) : "Маршрутизатор выключен"}</dd>
       <dt>Последний кандидат</dt><dd>${version(state.desiredVersion)}</dd>
+      ${state.publishedRulesVersion ? `<dt>Опубликованные правила</dt><dd>${version(state.publishedRulesVersion)}</dd>` : ""}
       <dt>Последняя рабочая</dt><dd>${version(state.lastSuccessfulVersion)}</dd>
       ${state.reason ? `<dt>Причина применения</dt><dd>${escapeHtml(reasons[state.reason] ?? "Изменение конфигурации")}</dd>` : ""}
     </dl>
-    <p class="${pending ? "err" : "muted"}">${saved}</p>
+    ${state.phase !== "rules_published" ? `<p class="${pending ? "err" : "muted"}">${saved}</p>` : ""}
     ${state.error ? `<p class="err">${escapeHtml(state.error)}</p>` : ""}
   </details>`;
 }

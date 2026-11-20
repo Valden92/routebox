@@ -125,6 +125,7 @@ export interface RouterConfigurationState {
     | "preparing"
     | "applying"
     | "applied"
+    | "rules_published"
     | "rejected"
     | "rolling_back"
     | "rolled_back"
@@ -141,6 +142,8 @@ export interface RouterConfigurationState {
   error?: string;
   running: boolean;
   matchesSavedSettings?: boolean;
+  unchanged?: boolean;
+  publishedRulesVersion?: string;
 }
 
 export interface StatusResponse {
@@ -280,6 +283,8 @@ export interface RulesResponse {
   domains: DomainRule[];
   apps: AppRule[];
 }
+
+export type RuleAdditionStatus = "created" | "updated" | "unchanged";
 
 export interface AutoCheckResponse {
   host: string;

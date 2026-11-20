@@ -35,7 +35,12 @@ import { AutoSelectSession } from "./autoselect-session";
 import { AutoRoutingController, autoRoutingStatus, autoRoutingTransport } from "./auto-routing";
 import { renderConfigurationState } from "./config-state";
 import { ModalLifecycle } from "./modal-lifecycle";
-import { RulesController, ruleMutationError, setRuleButtonPending } from "./rules-controller";
+import {
+  RulesController,
+  ruleAdditionMessage,
+  ruleMutationError,
+  setRuleButtonPending,
+} from "./rules-controller";
 import { orderNodes, retainPingsForNodes } from "./nodes-sort";
 import {
   autoSelectResultToast,
@@ -1485,13 +1490,12 @@ window.addEventListener("DOMContentLoaded", () => {
     e.preventDefault();
     const fd = new FormData(e.target as HTMLFormElement);
     try {
-      if (
-        await rulesController.add({
-          pattern: String(fd.get("pattern") || "").trim(),
-          path: fd.get("path") as RoutePath,
-        })
-      ) {
-        showToast("Правило добавлено");
+      const result = await rulesController.add({
+        pattern: String(fd.get("pattern") || "").trim(),
+        path: fd.get("path") as RoutePath,
+      });
+      if (result) {
+        showToast(ruleAdditionMessage(result));
       }
     } catch (error) {
       showToast(ruleMutationError(error, "add"), true);

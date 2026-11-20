@@ -17,6 +17,27 @@ function state(overrides: Partial<RouterConfigurationState> = {}): RouterConfigu
 }
 
 describe("router configuration diagnostics", () => {
+  it("shows published rules without extra loading or connection explanations", () => {
+    const html = renderConfigurationState(
+      state({
+        phase: "rules_published",
+        publishedRulesVersion: "aaaaaaaaaaaa123456",
+        matchesSavedSettings: undefined,
+      }),
+    );
+    expect(html).toContain("Правила обновлены без перезапуска VPN");
+    expect(html).toContain("Опубликованные правила</dt><dd>aaaaaaaaaaaa");
+    expect(html).not.toContain("sing-box подхватывает правила автоматически");
+    expect(html).not.toContain("Подтверждение загрузки от ядра недоступно");
+    expect(html).not.toContain("Уже открытые соединения сохраняют свой маршрут");
+    expect(html).not.toContain("Соответствие сохранённым настройкам ещё не подтверждено");
+    expect(html).not.toContain("Сохранённые настройки соответствуют подтверждённой версии");
+  });
+  it("distinguishes a checked unchanged config from a restarted one", () => {
+    const html = renderConfigurationState(state({ unchanged: true }));
+    expect(html).toContain("Конфигурация не изменилась — перезапуск не потребовался");
+    expect(html).not.toContain("Последнее применение успешно");
+  });
   it("supports an older daemon without the added optional state", () => {
     expect(renderConfigurationState()).toBe("");
   });

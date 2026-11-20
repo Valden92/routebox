@@ -38,9 +38,11 @@ type Server struct {
 	Store             *config.Store
 	SingBox           *singbox.Manager
 	configApply       configApplyTracker
+	ruleApplies       ruleApplyBatcher
 	router            chi.Router
 	refresh           *refreshScheduler
 	autoMu            sync.Mutex
+	liveRules         *liveRouterRules
 	observedHosts     map[string]time.Time
 	autoSelectJobs    sync.Map   // jobId → *autoSelectJob
 	autoSelectMu      sync.Mutex // probe jobs share ports and a config file
@@ -417,15 +419,23 @@ func (s *Server) personalReapply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ensureRouter(ctx context.Context) error {
+	_, err := s.ensureRouterResult(ctx)
+	return err
+}
+
+func (s *Server) ensureRouterResult(ctx context.Context) (bool, error) {
 	s.autoMu.Lock()
 	defer s.autoMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	return s.ensureRouterLocked(ctx)
 }
 
-func (s *Server) ensureRouterLocked(ctx context.Context) error {
+func (s *Server) ensureRouterLocked(ctx context.Context) (bool, error) {
 	st := s.Store.Get()
 	if !singbox.HostReady(st.SingBoxPath) {
-		return fmt.Errorf("host_not_ready: выполните make sync")
+		return false, fmt.Errorf("host_not_ready: выполните make sync")
 	}
 	var node *subscription.Node
 	if n, err := s.selectedNode(st); err == nil {
@@ -443,9 +453,20 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 	log.Printf("ensureRouter: personalEnabled=%v sysVPN=%v wasRunning=%v node=%q proto=%s",
 		st.PersonalVPN.Enabled, snapshot.SystemVPNUp, s.SingBox.Running(), nodeName, nodeProto)
 	runtimeTouched := false
-	err := s.configApply.apply(ctx, st, st.SingBoxConfigPath, configurationApplyReason(ctx), func(candidate string) error {
-		if err := singbox.WriteRouterConfigWithSnapshot(candidate, node, st, "tun100", snapshot); err != nil {
-			return err
+	var preparedRules *liveRouterRules
+	activatedRules := false
+	defer func() {
+		// A failed startup/rollback may leave the candidate process alive.
+		// Keep its files whenever runtime replacement has begun.
+		if preparedRules != nil && !activatedRules && !runtimeTouched {
+			_ = os.RemoveAll(preparedRules.dir)
+		}
+	}()
+	reapplied, err := s.configApply.apply(ctx, st, st.SingBoxConfigPath, configurationApplyReason(ctx), func(candidate string) error {
+		var prepareErr error
+		preparedRules, prepareErr = prepareLiveRouterRules(candidate, node, st, snapshot)
+		if prepareErr != nil {
+			return prepareErr
 		}
 		body, err := os.ReadFile(candidate)
 		if err != nil {
@@ -475,10 +496,14 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 		if runtimeTouched && !s.SingBox.Running() {
 			singbox.RestoreAfterPersonalVPNOn(st.MainInterface)
 		}
-		return err
+		return false, err
+	}
+	if reapplied && preparedRules != nil {
+		s.liveRules = preparedRules
+		activatedRules = true
 	}
 	log.Printf("ensureRouter: ok sysVPN=%v", snapshot.SystemVPNUp)
-	return nil
+	return reapplied, nil
 }
 
 func (s *Server) personalDisconnect(w http.ResponseWriter, r *http.Request) {
@@ -1116,6 +1141,7 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := uuid.NewString()
+	status := "created"
 	err := s.Store.Update(func(st *config.Settings) {
 		if req.ProcessName != "" {
 			st.AppRules = append(st.AppRules, config.AppRule{
@@ -1128,6 +1154,11 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 			pattern = req.Pattern
 		}
 		if idx := routing.FindDomainRuleIndex(st.DomainRules, pattern); idx >= 0 {
+			previous := st.DomainRules[idx]
+			status = "updated"
+			if previous.Pattern == pattern && previous.Path == req.Path && previous.Source == "manual" && previous.Enabled {
+				status = "unchanged"
+			}
 			st.DomainRules[idx].Pattern = pattern
 			st.DomainRules[idx].Path = req.Path
 			st.DomainRules[idx].Source = "manual"
@@ -1149,7 +1180,7 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "reapply_failed", err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"id": id, "reapplied": reapplied})
+	writeJSON(w, map[string]any{"id": id, "reapplied": reapplied, "status": status})
 }
 
 type updateRuleReq struct {
@@ -1335,7 +1366,10 @@ func (s *Server) reapplyPersonalIfRunning(ctx context.Context) (bool, error) {
 	if !s.SingBox.Running() {
 		return false, nil
 	}
-	return true, s.ensureRouter(ctx)
+	reason := configurationApplyReason(ctx)
+	return s.ruleApplies.request(ctx, func(shared context.Context) (bool, error) {
+		return s.applyRuleBatch(shared, reason)
+	})
 }
 
 var errEmptyHost = errors.New("empty host")
