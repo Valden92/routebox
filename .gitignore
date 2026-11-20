@@ -11,3 +11,7 @@
 *.enc
 .DS_Store
 .idea
+
+# Per-start local API credential
+.api-token
+.api-token-*

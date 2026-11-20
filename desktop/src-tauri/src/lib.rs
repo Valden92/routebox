@@ -8,9 +8,46 @@ use tauri::Manager;
 
 const API_ADDR: &str = "127.0.0.1:47891";
 /// Согласовано с desktop/src/status-ui.ts (MIN_API_VERSION).
-const MIN_API_VERSION: u64 = 5;
+const MIN_API_VERSION: u64 = 6;
 
 struct DaemonState(Mutex<Option<Child>>);
+
+fn read_api_token(path: &std::path::Path) -> Result<String, String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| "API credential unavailable")?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err("Invalid API credential file".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err("API credential must have private permissions".into());
+        }
+    }
+    let token = std::fs::read_to_string(path).map_err(|_| "API credential unavailable")?;
+    let token = token.trim();
+    if token.len() != 64 || !token.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Invalid API credential".into());
+    }
+    Ok(token.to_owned())
+}
+
+fn api_token_path(config_home: Option<PathBuf>, home: Option<PathBuf>) -> Result<PathBuf, String> {
+    let base = config_home
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(|| home.map(|p| p.join(".config")))
+        .ok_or("Config directory unavailable")?;
+    Ok(base.join("vpn-router/.api-token"))
+}
+
+#[tauri::command]
+fn local_api_token() -> Result<String, String> {
+    let path = api_token_path(
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        std::env::var_os("HOME").map(PathBuf::from),
+    )?;
+    read_api_token(&path)
+}
 
 fn daemon_path() -> PathBuf {
     if cfg!(debug_assertions) {
@@ -260,6 +297,7 @@ fn ensure_daemon() -> Option<Child> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![local_api_token])
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let child = ensure_daemon();
@@ -279,4 +317,78 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(all(test, unix))]
+mod credential_tests {
+    use super::{api_token_path, read_api_token};
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::path::PathBuf;
+
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new() -> Self {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "routebox-rust-token-{}-{stamp}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn token(&self, value: &str) -> PathBuf {
+            let path = self.0.join(".api-token");
+            std::fs::write(&path, value).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            path
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    #[test]
+    fn resolves_config_path_like_the_daemon() {
+        let home = Some(PathBuf::from("/home/fixture"));
+        assert_eq!(
+            api_token_path(None, home.clone()).unwrap(),
+            PathBuf::from("/home/fixture/.config/vpn-router/.api-token")
+        );
+        assert_eq!(
+            api_token_path(Some(PathBuf::new()), home.clone()).unwrap(),
+            PathBuf::from("/home/fixture/.config/vpn-router/.api-token")
+        );
+        assert_eq!(
+            api_token_path(Some(PathBuf::from("/custom/config")), home).unwrap(),
+            PathBuf::from("/custom/config/vpn-router/.api-token")
+        );
+        assert!(api_token_path(None, None).is_err());
+    }
+
+    #[test]
+    fn reads_private_token_and_rotation() {
+        let dir = TempDir::new();
+        let path = dir.token(&"a".repeat(64));
+        assert_eq!(read_api_token(&path).unwrap(), "a".repeat(64));
+        dir.token(&"b".repeat(64));
+        assert_eq!(read_api_token(&path).unwrap(), "b".repeat(64));
+    }
+    #[test]
+    fn rejects_public_missing_invalid_or_symlink_files() {
+        let dir = TempDir::new();
+        let path = dir.token(&"a".repeat(64));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_api_token(&path).is_err());
+        dir.token("invalid");
+        assert!(read_api_token(&path).is_err());
+        let link = dir.0.join("link");
+        symlink(&path, &link).unwrap();
+        assert!(read_api_token(&link).is_err());
+        std::fs::remove_file(&path).unwrap();
+        assert!(read_api_token(&path).is_err());
+    }
 }

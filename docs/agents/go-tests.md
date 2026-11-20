@@ -1,12 +1,6 @@
----
-description: Правила для Go-тестов (корневой tests/ + редко package-local)
-globs: "{tests/**/*_test.go,**/*_test.go}"
-alwaysApply: false
----
-
 # Go — тесты
 
-- **После правок логики** — сразу добавить/обновить тесты в этой же задаче (см. `quality-gate.mdc`).
+- **После правок логики** — сразу добавить/обновить тесты в этой же задаче (см. [quality.md](quality.md)).
 - **Основное место:** `tests/<пакет>/` в корне, black-box (`package foo_test`), импорт `internal/...`.
 - Фикстуры: `tests/<пакет>/testdata/` (без секретов и живых URI подписок).
 - Package-local `*_test.go` рядом с кодом — только если нужен доступ к неэкспортируемому (например coexist/Linux). Не плодить без нужды.
@@ -14,4 +8,6 @@ alwaysApply: false
 - Табличные тесты предпочтительны; имена кейсов — понятные строки.
 - Не полагаться на внешнюю сеть/реальный NM в unit-тестах.
 - Не требовать `t.Parallel()` везде (линтер смягчён).
-- Запуск: `make test` / `make test-go` → `go test ./tests/... ./internal/...`. Перед сдачей задачи — ещё `make check-fmt` и `make lint`.
+- Запуск: `make test` / `make test-go` → `go test ./tests/... ./internal/... ./cmd/...`. Общие проверки — [quality.md](quality.md).
+
+Область: `**/*_test.go`.
