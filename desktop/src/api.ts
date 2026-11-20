@@ -118,6 +118,31 @@ export interface AutoRoutingSettings {
   autoDetectRouting: boolean;
 }
 
+export interface RouterConfigurationState {
+  attempt: number;
+  phase:
+    | "unknown"
+    | "preparing"
+    | "applying"
+    | "applied"
+    | "rejected"
+    | "rolling_back"
+    | "rolled_back"
+    | "rollback_failed"
+    | "failed";
+  reason?: string;
+  desiredVersion?: string;
+  appliedVersion?: string;
+  lastSuccessfulVersion?: string;
+  startedAt?: string;
+  completedAt?: string;
+  lastSuccessfulAt?: string;
+  rollback?: "restored" | "preserved" | "file_restored" | "failed";
+  error?: string;
+  running: boolean;
+  matchesSavedSettings?: boolean;
+}
+
 export interface StatusResponse {
   internet: {
     up: boolean;
@@ -156,6 +181,7 @@ export interface StatusResponse {
     configMode?: "coexist" | "full";
     configFileMode?: "coexist" | "full" | "";
     configStale?: boolean;
+    configuration?: RouterConfigurationState;
   };
 }
 

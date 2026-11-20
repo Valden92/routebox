@@ -452,7 +452,7 @@ func (s *Server) runAutoSelectJob(job *autoSelectJob, subID string, nodes []subs
 	reconnected := false
 	st = s.Store.Get()
 	if st.PersonalVPN.Enabled && singbox.HostReady(st.SingBoxPath) {
-		if err := s.ensureRouter(ctx); err != nil {
+		if err := s.ensureRouter(withApplyReason(ctx, "auto_select")); err != nil {
 			job.patch(func(st *autoSelectJobStatus) {
 				st.Phase = "error"
 				st.Finished = true

@@ -37,6 +37,72 @@ body {
   font-weight: 600;
 }
 
+.router-configuration {
+  margin-top: 1rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.router-configuration > summary {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.6rem;
+  min-height: 38px;
+  cursor: pointer;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  list-style: none;
+  color: #aeb7c6;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.router-configuration > summary::-webkit-details-marker {
+  display: none;
+}
+
+.router-configuration > summary::marker {
+  content: "";
+}
+
+.router-configuration > summary::before {
+  content: "";
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: 0.7;
+  transform: rotate(-45deg);
+  transition: transform 160ms ease;
+}
+
+.router-configuration[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.router-configuration > summary:hover {
+  background-color: rgba(255, 255, 255, 0.035);
+  color: var(--accent);
+}
+
+.router-configuration > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .router-configuration > summary,
+  .router-configuration > summary::before {
+    transition: none;
+  }
+}
+
 .brand-title {
   background: linear-gradient(
     110deg,

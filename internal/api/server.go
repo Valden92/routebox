@@ -37,6 +37,7 @@ type Server struct {
 	shuttingDown      bool
 	Store             *config.Store
 	SingBox           *singbox.Manager
+	configApply       configApplyTracker
 	router            chi.Router
 	refresh           *refreshScheduler
 	autoMu            sync.Mutex
@@ -82,7 +83,7 @@ func (s *Server) startBackgroundWorkers() {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		_ = s.ensureRouter(ctx)
+		_ = s.ensureRouter(withApplyReason(ctx, "startup"))
 	}()
 }
 
@@ -163,6 +164,7 @@ func (s *Server) routes() {
 	r.Get("/api/health", s.health)
 	r.Get("/api/version", s.version)
 	r.Get("/api/status", s.status)
+	r.Get("/api/router/configuration", s.routerConfiguration)
 	r.Get("/api/settings", s.getSettings)
 	r.Put("/api/settings", s.putSettings)
 	r.Post("/api/unlock", s.unlock)
@@ -261,6 +263,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	personal["configFileMode"] = fileMode
 	wantMode := singbox.ConfigModeFor(st)
 	personal["configStale"] = s.SingBox.Running() && fileMode != "" && fileMode != wantMode
+	personal["configuration"] = s.configApply.snapshot(st, s.SingBox.Running())
 	writeJSON(w, map[string]any{
 		"internet":    internet,
 		"systemVpn":   sys,
@@ -440,7 +443,7 @@ func (s *Server) ensureRouterLocked(ctx context.Context) error {
 	log.Printf("ensureRouter: personalEnabled=%v sysVPN=%v wasRunning=%v node=%q proto=%s",
 		st.PersonalVPN.Enabled, snapshot.SystemVPNUp, s.SingBox.Running(), nodeName, nodeProto)
 	runtimeTouched := false
-	err := applyRouterConfig(ctx, st.SingBoxConfigPath, func(candidate string) error {
+	err := s.configApply.apply(ctx, st, st.SingBoxConfigPath, configurationApplyReason(ctx), func(candidate string) error {
 		if err := singbox.WriteRouterConfigWithSnapshot(candidate, node, st, "tun100", snapshot); err != nil {
 			return err
 		}
@@ -522,6 +525,7 @@ func (s *Server) personalStatus(w http.ResponseWriter, _ *http.Request) {
 		"configMode":      singbox.ConfigModeFor(st),
 		"configFileMode":  singbox.ConfigFileMode(st.SingBoxConfigPath),
 		"configStale":     s.SingBox.Running() && singbox.ConfigFileMode(st.SingBoxConfigPath) != singbox.ConfigModeFor(st),
+		"configuration":   s.configApply.snapshot(st, s.SingBox.Running()),
 	})
 }
 
@@ -1516,7 +1520,7 @@ func (s *Server) reapplyIfConfigModeChanged() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	_ = s.ensureRouter(ctx)
+	_ = s.ensureRouter(withApplyReason(ctx, "system_vpn_changed"))
 }
 
 func (s *Server) observeTraffic() {
@@ -1539,7 +1543,7 @@ func (s *Server) observeTraffic() {
 			continue
 		}
 		checkCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
-		_, _ = s.autoLearnHost(checkCtx, host, true, true)
+		_, _ = s.autoLearnHost(withApplyReason(checkCtx, "background_learning"), host, true, true)
 		cancel()
 		checked++
 		if checked >= 3 {
