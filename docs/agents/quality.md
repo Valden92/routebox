@@ -45,4 +45,3 @@ rtk go build -o "$build_dir/vpn-router-daemon" ./cmd/daemon/
   quality gate сам по себе не разрешает commit/push/merge.
 - Workflows: `.github/workflows/{lint,format,test}.yml`; для Tauri — `lint-rust.yml`.
   Конфиги: `.golangci.yml`, `desktop/eslint.config.js`, `.editorconfig`.
-
