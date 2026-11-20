@@ -57,7 +57,7 @@ export function renderConfigurationState(
       <dt>Последняя рабочая</dt><dd>${version(state.lastSuccessfulVersion)}</dd>
       ${state.reason ? `<dt>Причина применения</dt><dd>${escapeHtml(reasons[state.reason] ?? "Изменение конфигурации")}</dd>` : ""}
     </dl>
-    <p class="${pending ? "err" : "muted"}">${state.phase === "rules_published" ? "sing-box подхватывает правила автоматически. Подтверждение загрузки от ядра недоступно. Уже открытые соединения сохраняют свой маршрут; новые используют обновлённые правила." : saved}</p>
+    ${state.phase !== "rules_published" ? `<p class="${pending ? "err" : "muted"}">${saved}</p>` : ""}
     ${state.error ? `<p class="err">${escapeHtml(state.error)}</p>` : ""}
   </details>`;
 }
