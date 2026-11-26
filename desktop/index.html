@@ -212,12 +212,20 @@
               placeholder="Поиск правил: telegram, yandex, ptsecurity…"
               autocomplete="off"
             />
-            <span id="rules-search-status" class="muted"></span>
+            <select id="rules-path-filter" aria-label="Фильтр по маршруту">
+              <option value="all">Все маршруты</option>
+              <option value="personal">Личный VPN</option>
+              <option value="direct">Без VPN</option>
+              <option value="work">Системный VPN</option>
+            </select>
+            <select id="rules-enabled-filter" aria-label="Фильтр по состоянию">
+              <option value="all">Все состояния</option>
+              <option value="enabled">Включённые</option>
+              <option value="disabled">Выключенные</option>
+            </select>
+            <span id="rules-search-status" class="muted" role="status" aria-live="polite"></span>
           </div>
-          <h3>Автоматические правила</h3>
-          <ul id="auto-rules-list" class="rules-list"></ul>
-          <h3>Ручные правила</h3>
-          <ul id="manual-rules-list" class="rules-list"></ul>
+          <div id="rules-groups"></div>
         </section>
 
         <section id="tab-apps" class="panel">
