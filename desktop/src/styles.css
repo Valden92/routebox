@@ -24,6 +24,17 @@ body {
   padding: 1rem 1.25rem 2rem;
 }
 
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  margin: -1rem -1.25rem 1rem;
+  padding: 1rem 1.25rem;
+  background: #0f1115;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
+}
+
 .header {
   display: flex;
   align-items: center;
@@ -143,8 +154,8 @@ body {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.35rem;
-  margin-bottom: 1rem;
 }
 
 .tab {
@@ -154,6 +165,12 @@ body {
   padding: 0.45rem 0.9rem;
   border-radius: 8px;
   cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .tab.active {
