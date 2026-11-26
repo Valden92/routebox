@@ -29,201 +29,211 @@
         </nav>
       </header>
 
-      <section id="tab-dashboard" class="panel active">
-        <div class="cards">
-          <article class="card card-wide" id="card-router">
-            <h2>Маршрутизатор</h2>
-            <div class="card-body">Загрузка…</div>
-          </article>
-          <article class="card" id="card-internet">
-            <h2>Интернет</h2>
-            <div class="card-body">Загрузка…</div>
-          </article>
-          <article class="card" id="card-system-vpn">
-            <h2>Системный VPN</h2>
-            <div class="card-body">Загрузка…</div>
-          </article>
-          <article class="card" id="card-personal">
-            <h2>Личный VPN</h2>
-            <div class="card-body">Загрузка…</div>
-            <div class="card-actions">
-              <button type="button" id="btn-personal-on">Включить</button>
-              <button type="button" id="btn-personal-off">Выключить</button>
-            </div>
-            <p id="personal-vpn-progress" class="muted card-progress hidden" aria-live="polite"></p>
-          </article>
-        </div>
-      </section>
+      <main class="app-content" tabindex="0" aria-label="Содержимое вкладки">
+        <section id="tab-dashboard" class="panel active">
+          <div class="cards">
+            <article class="card card-wide" id="card-router">
+              <h2>Маршрутизатор</h2>
+              <div class="card-body">Загрузка…</div>
+            </article>
+            <article class="card" id="card-internet">
+              <h2>Интернет</h2>
+              <div class="card-body">Загрузка…</div>
+            </article>
+            <article class="card" id="card-system-vpn">
+              <h2>Системный VPN</h2>
+              <div class="card-body">Загрузка…</div>
+            </article>
+            <article class="card" id="card-personal">
+              <h2>Личный VPN</h2>
+              <div class="card-body">Загрузка…</div>
+              <div class="card-actions">
+                <button type="button" id="btn-personal-on">Включить</button>
+                <button type="button" id="btn-personal-off">Выключить</button>
+              </div>
+              <p
+                id="personal-vpn-progress"
+                class="muted card-progress hidden"
+                aria-live="polite"
+              ></p>
+            </article>
+          </div>
+        </section>
 
-      <section id="tab-subscriptions" class="panel">
-        <div id="personal-setup-banner" class="banner hidden" role="alert"></div>
-        <form id="form-add-sub" class="sub-form">
-          <input name="name" placeholder="Название" required />
-          <div class="sub-source-tabs" role="tablist" aria-label="Способ добавления">
-            <button type="button" class="sub-source-tab active" data-source="url">URL</button>
-            <button type="button" class="sub-source-tab" data-source="text">Текст</button>
-            <button type="button" class="sub-source-tab" data-source="uri">Ссылка</button>
-            <button type="button" class="sub-source-tab" data-source="file">Файл</button>
-            <button type="button" class="sub-source-tab" data-source="qr">QR</button>
-          </div>
-          <div class="sub-source-panel" data-panel="url">
-            <input name="url" id="add-sub-url" placeholder="https://… URL подписки" />
-          </div>
-          <div class="sub-source-panel hidden" data-panel="text">
-            <div class="text-import">
-              <textarea
-                name="content"
-                id="add-sub-content"
-                rows="6"
-                placeholder="vless://… / ss://… / base64 или Clash/Mihomo YAML (proxies: …)"
-              ></textarea>
+        <section id="tab-subscriptions" class="panel">
+          <div id="personal-setup-banner" class="banner hidden" role="alert"></div>
+          <form id="form-add-sub" class="sub-form">
+            <input name="name" placeholder="Название" required />
+            <div class="sub-source-tabs" role="tablist" aria-label="Способ добавления">
+              <button type="button" class="sub-source-tab active" data-source="url">URL</button>
+              <button type="button" class="sub-source-tab" data-source="text">Текст</button>
+              <button type="button" class="sub-source-tab" data-source="uri">Ссылка</button>
+              <button type="button" class="sub-source-tab" data-source="file">Файл</button>
+              <button type="button" class="sub-source-tab" data-source="qr">QR</button>
             </div>
-            <p class="muted file-picker-formats">
-              Формат определяется автоматически: список URI, base64 или Clash YAML
-              (<code>proxies</code>: vless / ss / hysteria2).
-            </p>
-          </div>
-          <div class="sub-source-panel hidden" data-panel="uri">
-            <input name="uri" id="add-sub-uri" placeholder="vless://… или hy2://…" />
-          </div>
-          <div class="sub-source-panel hidden" data-panel="file">
-            <div class="file-picker">
-              <input
-                type="file"
-                id="add-sub-file"
-                class="file-picker-input"
-                accept=".txt,.conf,.base64,.ovpn,.yaml,.yml,text/plain,application/x-yaml"
-              />
-              <button type="button" class="secondary" id="add-sub-file-btn">Выбрать файл</button>
-              <span class="muted file-picker-name" id="add-sub-file-name">файл не выбран</span>
+            <div class="sub-source-panel" data-panel="url">
+              <input name="url" id="add-sub-url" placeholder="https://… URL подписки" />
             </div>
-            <p class="muted file-picker-formats">
-              Форматы: <code>.txt</code> / <code>.conf</code> (URI), <code>.yaml</code> /
-              <code>.yml</code> (Clash), <code>.ovpn</code> (OpenVPN)
-            </p>
-          </div>
-          <div class="sub-source-panel hidden" data-panel="qr">
-            <div class="file-picker qr-import-actions">
-              <input
-                type="file"
-                id="add-qr-file"
-                class="file-picker-input"
-                accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif"
-              />
-              <button type="button" class="secondary" id="add-qr-file-btn">Выбрать картинку</button>
-              <button type="button" class="secondary" id="add-qr-paste-btn">
-                Вставить из буфера
-              </button>
-              <span class="muted file-picker-name" id="add-qr-file-name">картинка не выбрана</span>
+            <div class="sub-source-panel hidden" data-panel="text">
+              <div class="text-import">
+                <textarea
+                  name="content"
+                  id="add-sub-content"
+                  rows="6"
+                  placeholder="vless://… / ss://… / base64 или Clash/Mihomo YAML (proxies: …)"
+                ></textarea>
+              </div>
+              <p class="muted file-picker-formats">
+                Формат определяется автоматически: список URI, base64 или Clash YAML
+                (<code>proxies</code>: vless / ss / hysteria2).
+              </p>
             </div>
-            <p class="muted file-picker-formats">
-              Камеры нет: загрузите скриншот QR или вставьте картинку из буфера (Ctrl+V). После
-              распознавания поля заполнятся автоматически — нажмите «Добавить».
-            </p>
-            <p class="muted" id="add-qr-status" aria-live="polite"></p>
-          </div>
-          <div id="add-ovpn-auth" class="sub-form-row hidden">
-            <input
-              name="ovpnUser"
-              id="add-ovpn-user"
-              placeholder="OpenVPN логин"
-              autocomplete="username"
-            />
-            <input
-              name="ovpnPass"
-              id="add-ovpn-pass"
-              type="password"
-              placeholder="OpenVPN пароль"
-              autocomplete="current-password"
-            />
-          </div>
-          <div class="sub-form-row" id="add-refresh-row">
-            <span id="add-refresh-controls" class="sub-refresh-controls">
-              <label class="check-label">
-                <input type="checkbox" name="autoRefresh" id="add-auto-refresh" checked />
-                Автообновление
-              </label>
-              <label class="interval-label">
-                каждые
+            <div class="sub-source-panel hidden" data-panel="uri">
+              <input name="uri" id="add-sub-uri" placeholder="vless://… или hy2://…" />
+            </div>
+            <div class="sub-source-panel hidden" data-panel="file">
+              <div class="file-picker">
                 <input
-                  type="number"
-                  name="refreshMinutes"
-                  id="add-refresh-minutes"
-                  min="5"
-                  max="10080"
-                  value="60"
+                  type="file"
+                  id="add-sub-file"
+                  class="file-picker-input"
+                  accept=".txt,.conf,.base64,.ovpn,.yaml,.yml,text/plain,application/x-yaml"
                 />
-                мин.
-              </label>
-            </span>
-            <button type="submit">Добавить</button>
-          </div>
-          <p class="muted sub-form-hint" id="add-sub-hint">
-            Снимите галочку — обновлять подписку только кнопкой «Обновить».
+                <button type="button" class="secondary" id="add-sub-file-btn">Выбрать файл</button>
+                <span class="muted file-picker-name" id="add-sub-file-name">файл не выбран</span>
+              </div>
+              <p class="muted file-picker-formats">
+                Форматы: <code>.txt</code> / <code>.conf</code> (URI), <code>.yaml</code> /
+                <code>.yml</code> (Clash), <code>.ovpn</code> (OpenVPN)
+              </p>
+            </div>
+            <div class="sub-source-panel hidden" data-panel="qr">
+              <div class="file-picker qr-import-actions">
+                <input
+                  type="file"
+                  id="add-qr-file"
+                  class="file-picker-input"
+                  accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif"
+                />
+                <button type="button" class="secondary" id="add-qr-file-btn">
+                  Выбрать картинку
+                </button>
+                <button type="button" class="secondary" id="add-qr-paste-btn">
+                  Вставить из буфера
+                </button>
+                <span class="muted file-picker-name" id="add-qr-file-name"
+                  >картинка не выбрана</span
+                >
+              </div>
+              <p class="muted file-picker-formats">
+                Камеры нет: загрузите скриншот QR или вставьте картинку из буфера (Ctrl+V). После
+                распознавания поля заполнятся автоматически — нажмите «Добавить».
+              </p>
+              <p class="muted" id="add-qr-status" aria-live="polite"></p>
+            </div>
+            <div id="add-ovpn-auth" class="sub-form-row hidden">
+              <input
+                name="ovpnUser"
+                id="add-ovpn-user"
+                placeholder="OpenVPN логин"
+                autocomplete="username"
+              />
+              <input
+                name="ovpnPass"
+                id="add-ovpn-pass"
+                type="password"
+                placeholder="OpenVPN пароль"
+                autocomplete="current-password"
+              />
+            </div>
+            <div class="sub-form-row" id="add-refresh-row">
+              <span id="add-refresh-controls" class="sub-refresh-controls">
+                <label class="check-label">
+                  <input type="checkbox" name="autoRefresh" id="add-auto-refresh" checked />
+                  Автообновление
+                </label>
+                <label class="interval-label">
+                  каждые
+                  <input
+                    type="number"
+                    name="refreshMinutes"
+                    id="add-refresh-minutes"
+                    min="5"
+                    max="10080"
+                    value="60"
+                  />
+                  мин.
+                </label>
+              </span>
+              <button type="submit">Добавить</button>
+            </div>
+            <p class="muted sub-form-hint" id="add-sub-hint">
+              Снимите галочку — обновлять подписку только кнопкой «Обновить».
+            </p>
+          </form>
+          <div id="subs-list"></div>
+        </section>
+
+        <section id="tab-rules" class="panel">
+          <label>
+            <input type="checkbox" id="auto-routing-enabled" disabled />
+            Автоматически запоминать маршруты открываемых сайтов
+          </label>
+          <p id="auto-routing-status" class="muted" role="status" aria-live="polite">
+            Загрузка настройки…
           </p>
-        </form>
-        <div id="subs-list"></div>
-      </section>
+          <form id="form-auto-rule" class="inline-form">
+            <input name="url" placeholder="Сайт для авто-проверки: web.telegram.org" required />
+            <button type="submit" id="btn-auto-rule">Проверить и запомнить</button>
+          </form>
+          <p class="muted">
+            Авто-проверка выбирает первый доступный путь: обычная сеть → системный VPN → личный VPN.
+          </p>
 
-      <section id="tab-rules" class="panel">
-        <label>
-          <input type="checkbox" id="auto-routing-enabled" disabled />
-          Автоматически запоминать маршруты открываемых сайтов
-        </label>
-        <p id="auto-routing-status" class="muted" role="status" aria-live="polite">
-          Загрузка настройки…
-        </p>
-        <form id="form-auto-rule" class="inline-form">
-          <input name="url" placeholder="Сайт для авто-проверки: web.telegram.org" required />
-          <button type="submit" id="btn-auto-rule">Проверить и запомнить</button>
-        </form>
-        <p class="muted">
-          Авто-проверка выбирает первый доступный путь: обычная сеть → системный VPN → личный VPN.
-        </p>
+          <form id="form-add-rule" class="inline-form">
+            <input name="pattern" placeholder="Домен или *.example.com" required />
+            <select name="path">
+              <option value="direct">Без VPN</option>
+              <option value="work">Системный VPN</option>
+              <option value="personal">Личный VPN</option>
+            </select>
+            <button type="submit" id="btn-add-rule">Добавить правило</button>
+          </form>
+          <p
+            id="rules-operation-status"
+            class="muted rules-operation-status"
+            role="status"
+            aria-live="polite"
+          ></p>
+          <div class="rules-toolbar">
+            <input
+              id="rules-search"
+              type="search"
+              placeholder="Поиск правил: telegram, yandex, ptsecurity…"
+              autocomplete="off"
+            />
+            <span id="rules-search-status" class="muted"></span>
+          </div>
+          <h3>Автоматические правила</h3>
+          <ul id="auto-rules-list" class="rules-list"></ul>
+          <h3>Ручные правила</h3>
+          <ul id="manual-rules-list" class="rules-list"></ul>
+        </section>
 
-        <form id="form-add-rule" class="inline-form">
-          <input name="pattern" placeholder="Домен или *.example.com" required />
-          <select name="path">
-            <option value="direct">Без VPN</option>
-            <option value="work">Системный VPN</option>
-            <option value="personal">Личный VPN</option>
-          </select>
-          <button type="submit" id="btn-add-rule">Добавить правило</button>
-        </form>
-        <p
-          id="rules-operation-status"
-          class="muted rules-operation-status"
-          role="status"
-          aria-live="polite"
-        ></p>
-        <div class="rules-toolbar">
-          <input
-            id="rules-search"
-            type="search"
-            placeholder="Поиск правил: telegram, yandex, ptsecurity…"
-            autocomplete="off"
-          />
-          <span id="rules-search-status" class="muted"></span>
-        </div>
-        <h3>Автоматические правила</h3>
-        <ul id="auto-rules-list" class="rules-list"></ul>
-        <h3>Ручные правила</h3>
-        <ul id="manual-rules-list" class="rules-list"></ul>
-      </section>
+        <section id="tab-apps" class="panel">
+          <h3>Приложения с сетью</h3>
+          <button id="btn-scan-apps" class="secondary">Сканировать</button>
+          <ul id="apps-list"></ul>
+        </section>
 
-      <section id="tab-apps" class="panel">
-        <h3>Приложения с сетью</h3>
-        <button id="btn-scan-apps" class="secondary">Сканировать</button>
-        <ul id="apps-list"></ul>
-      </section>
-
-      <section id="tab-probe" class="panel">
-        <form id="form-probe" class="inline-form">
-          <input name="url" placeholder="example.com или URL" required style="flex: 2" />
-          <button type="submit" id="btn-probe-submit">Проверить</button>
-        </form>
-        <p id="probe-hint" class="muted">Проверка идёт параллельно по всем путям (до ~45 с).</p>
-      </section>
+        <section id="tab-probe" class="panel">
+          <form id="form-probe" class="inline-form">
+            <input name="url" placeholder="example.com или URL" required style="flex: 2" />
+            <button type="submit" id="btn-probe-submit">Проверить</button>
+          </form>
+          <p id="probe-hint" class="muted">Проверка идёт параллельно по всем путям (до ~45 с).</p>
+        </section>
+      </main>
     </div>
 
     <div id="modal-overlay" class="modal-overlay" aria-hidden="true">
