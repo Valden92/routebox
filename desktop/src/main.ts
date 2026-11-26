@@ -35,6 +35,8 @@ import { AutoSelectSession } from "./autoselect-session";
 import { AutoRoutingController, autoRoutingStatus, autoRoutingTransport } from "./auto-routing";
 import { renderConfigurationState } from "./config-state";
 import { setupShutdownNotice } from "./desktop-lifecycle";
+import { groupDomainRules, rulesFilterKey, type RulesFilters } from "./rules-groups";
+import { RulesGroupsView } from "./rules-groups-view";
 import { ModalLifecycle } from "./modal-lifecycle";
 import {
   RulesController,
@@ -52,14 +54,12 @@ import {
   updateAutoSelectProgress,
 } from "./autoselect";
 import {
-  filterRules,
   formatRefreshLabel,
   formatSubscriptionQuota,
   formatAnnounce,
   formatSubscriptionDates,
   formatSubscriptionStatusLine,
   formatSubscriptionType,
-  partitionDomainRules,
   rulesDataSignature,
 } from "./rules-util";
 import {
@@ -1185,23 +1185,22 @@ function currentRulesSearch(): string {
   return el<HTMLInputElement>("#rules-search").value.trim().toLowerCase();
 }
 
+let rulesGroupsView: RulesGroupsView | null = null;
+
 function renderRules(data: RulesResponse) {
   const domains = data.domains ?? [];
-  const query = currentRulesSearch();
-  const filteredDomains = filterRules(domains, query);
-  const { auto: autoRules, manual: manualRules } = partitionDomainRules(filteredDomains);
-  const autoList = el<HTMLElement>("#auto-rules-list");
-  const manualList = el<HTMLElement>("#manual-rules-list");
-  const suffix = query ? ` по запросу «${escapeHtml(query)}»` : "";
-
-  renderRulesList(autoList, autoRules, `Автоматических правил${suffix} нет.`);
-  renderRulesList(manualList, manualRules, `Ручных правил${suffix} нет.`);
-  bindRuleControls(autoList);
-  bindRuleControls(manualList);
-
-  const status = el<HTMLElement>("#rules-search-status");
-  status.textContent = query
-    ? `Найдено: ${filteredDomains.length} из ${domains.length}`
+  const filters: RulesFilters = {
+    query: currentRulesSearch(),
+    path: el<HTMLSelectElement>("#rules-path-filter").value as RulesFilters["path"],
+    enabled: el<HTMLSelectElement>("#rules-enabled-filter").value as RulesFilters["enabled"],
+  };
+  const groups = groupDomainRules(domains, filters);
+  const root = el<HTMLElement>("#rules-groups");
+  rulesGroupsView?.render(groups, rulesFilterKey(filters), renderRulesList);
+  bindRuleControls(root);
+  const count = groups.reduce((total, group) => total + group.matched, 0);
+  el("#rules-search-status").textContent = rulesFilterKey(filters)
+    ? `Найдено: ${count} из ${domains.length}`
     : `Всего правил: ${domains.length}`;
 }
 
@@ -1281,6 +1280,13 @@ async function checkApiVersion() {
 
 window.addEventListener("DOMContentLoaded", () => {
   setupTabs();
+  let rulesStorage: Storage | undefined;
+  try {
+    rulesStorage = localStorage;
+  } catch {
+    // The rule UI also works without persistent browser storage.
+  }
+  rulesGroupsView = new RulesGroupsView(el("#rules-groups"), rulesStorage);
   void setupShutdownNotice((message) => showToast(message, true)).catch(console.error);
 
   el<HTMLInputElement>("#auto-routing-enabled").addEventListener("change", async (event) => {
@@ -1532,11 +1538,15 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  el<HTMLInputElement>("#rules-search").addEventListener("input", () => {
-    if (cachedRulesData) {
-      renderRules(cachedRulesData);
-    }
-  });
+  for (const [selector, event] of [
+    ["#rules-search", "input"],
+    ["#rules-path-filter", "change"],
+    ["#rules-enabled-filter", "change"],
+  ]) {
+    el(selector).addEventListener(event, () => {
+      if (cachedRulesData) renderRules(cachedRulesData);
+    });
+  }
 
   el("#btn-scan-apps").addEventListener("click", async () => {
     const btn = el<HTMLButtonElement>("#btn-scan-apps");
