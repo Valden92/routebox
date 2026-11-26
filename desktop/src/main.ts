@@ -35,7 +35,13 @@ import { AutoSelectSession } from "./autoselect-session";
 import { AutoRoutingController, autoRoutingStatus, autoRoutingTransport } from "./auto-routing";
 import { renderConfigurationState } from "./config-state";
 import { setupShutdownNotice } from "./desktop-lifecycle";
-import { groupDomainRules, rulesFilterKey, type RulesFilters } from "./rules-groups";
+import {
+  groupDomainRules,
+  rulesFilterKey,
+  type RulesFilters,
+  type RuleSource,
+} from "./rules-groups";
+import { ruleClearSnapshot, showRulesClearConfirmation } from "./rules-clear";
 import { RulesGroupsView } from "./rules-groups-view";
 import { ModalLifecycle } from "./modal-lifecycle";
 import {
@@ -1204,11 +1210,25 @@ function renderRules(data: RulesResponse) {
     : `Всего правил: ${domains.length}`;
 }
 
+function openClearRulesModal(source: RuleSource) {
+  showRulesClearConfirmation(source, ruleClearSnapshot(cachedRulesData?.domains ?? [], source), {
+    open: openModal,
+    close: closeModal,
+    clear: (selectedSource, ids) => rulesController.clear(selectedSource, ids),
+    notify: showToast,
+  });
+}
+
 const rulesController = new RulesController(
   {
     load: () => api<RulesResponse>("/api/rules"),
     add: (rule) => api("/api/rules", { method: "POST", body: JSON.stringify(rule) }),
     remove: (id) => api(`/api/rules/${id}`, { method: "DELETE" }),
+    clear: (source, ids) =>
+      api<{ deleted: number }>("/api/rules/clear", {
+        method: "POST",
+        body: JSON.stringify({ source, ids }),
+      }),
   },
   (view) => {
     if (view.data) {
@@ -1220,10 +1240,24 @@ const rulesController = new RulesController(
       }
     }
     setRuleButtonPending(el<HTMLButtonElement>("#btn-add-rule"), view.adding);
-    el<HTMLFormElement>("#form-add-rule").setAttribute("aria-busy", String(view.adding));
+    if (view.clearing) el<HTMLButtonElement>("#btn-add-rule").disabled = true;
+    rulesGroupsView?.setBusy(Boolean(view.clearing || view.adding || view.deleting));
+    el("#rules-groups")
+      .querySelectorAll<HTMLInputElement>("[data-rule-path], [data-rule-enabled], [data-del]")
+      .forEach((control) => {
+        control.disabled = Boolean(view.clearing);
+      });
+    el<HTMLFormElement>("#form-add-rule").setAttribute(
+      "aria-busy",
+      String(Boolean(view.adding || view.clearing)),
+    );
     el("#rules-operation-status").textContent = [
       view.adding ? "Добавляем правило…" : "",
-      view.deleting ? `Удаляем правил: ${view.deleting}…` : "",
+      view.clearing
+        ? `Очищаем ${view.clearing === "auto" ? "автоматические" : "ручные"} правила…`
+        : view.deleting
+          ? `Удаляем правил: ${view.deleting}…`
+          : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -1286,7 +1320,7 @@ window.addEventListener("DOMContentLoaded", () => {
   } catch {
     // The rule UI also works without persistent browser storage.
   }
-  rulesGroupsView = new RulesGroupsView(el("#rules-groups"), rulesStorage);
+  rulesGroupsView = new RulesGroupsView(el("#rules-groups"), rulesStorage, openClearRulesModal);
   void setupShutdownNotice((message) => showToast(message, true)).catch(console.error);
 
   el<HTMLInputElement>("#auto-routing-enabled").addEventListener("change", async (event) => {
