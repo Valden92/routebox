@@ -71,3 +71,27 @@ make test
 
 Сам push новую версию не запускает и файлы рабочей копии не заменяет. Перенос
 проверенной версии в рабочую папку и её запуск — отдельное действие пользователя.
+
+## Установка зависимостей
+
+`make sync` проверяет и при необходимости устанавливает:
+
+- системные пакеты Tauri (`apt`, `sudo` если чего-то не хватает)
+- **sing-box** в `~/.local/bin`
+- **настройка хоста** (`setcap` на sing-box + drop-in NetworkManager для TUN, один `sudo` если ещё не сделано)
+- Go (в `~/.local/go`, если `go` нет в PATH)
+- Rust/cargo (через `rustup`, если нет)
+- `go mod download`, `npm install`, `cargo fetch`
+
+## Команды проверок
+
+- `make check-fmt` — проверка gofmt, Prettier и rustfmt.
+- `make lint` — golangci-lint и ESLint; `make lint-tools` устанавливает инструменты.
+- `make test` — Go, UI и тесты служебных скриптов.
+- `make lint-rust` — clippy; рецепт может создать отсутствующий sidecar в dev-копии.
+- `make fmt` — автоформатирование.
+- `make hooks` — подключить pre-commit; `make precommit` — запустить его проверки вручную.
+
+CI выполняет Lint, Format и Test; Tauri проверяется отдельным `lint-rust.yml`.
+Правила работы агента: [AGENTS.md](../AGENTS.md) и тематические документы `docs/agents/`.
+Технические контракты: [архитектура](ARCHITECTURE.md) и [безопасность](SECURITY.md).
