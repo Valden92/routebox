@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -30,6 +31,7 @@ import (
 )
 
 type Server struct {
+	stopRequested     atomic.Bool
 	runtimeMu         sync.RWMutex // serializes unlock/bootstrap, protected requests and shutdown
 	startWorkers      func()
 	runtimeStarted    bool
@@ -91,12 +93,35 @@ func (s *Server) startBackgroundWorkers() {
 
 // StopRouter does no network cleanup when encrypted settings were never unlocked.
 func (s *Server) StopRouter() {
+	if !s.stopRequested.CompareAndSwap(false, true) {
+		return
+	}
+	// Cancel before waiting on runtimeMu: a rule request may hold its read lock
+	// while waiting for a probe's apply to release autoMu.
+	s.autoSelectJobs.Range(func(_, value any) bool { value.(*autoSelectJob).cancel(); return true })
 	s.runtimeMu.Lock()
 	defer s.runtimeMu.Unlock()
 	s.shuttingDown = true
+	if s.refresh != nil {
+		close(s.refresh.stop)
+	}
+	var jobs []*autoSelectJob
+	s.autoSelectJobs.Range(func(_, value any) bool {
+		job := value.(*autoSelectJob)
+		job.cancel()
+		jobs = append(jobs, job)
+		return true
+	})
+	// Wait before taking autoMu: a canceled job may be finishing an apply/rollback
+	// under that mutex. The job closes done only after its probe has stopped.
+	for _, job := range jobs {
+		<-job.done
+	}
 	if !s.runtimeStarted {
 		return
 	}
+	s.autoMu.Lock()
+	defer s.autoMu.Unlock()
 	_ = s.SingBox.Stop()
 	singbox.RestoreAfterPersonalVPNOn(s.Store.Get().MainInterface)
 }
@@ -426,6 +451,9 @@ func (s *Server) ensureRouter(ctx context.Context) error {
 func (s *Server) ensureRouterResult(ctx context.Context) (bool, error) {
 	s.autoMu.Lock()
 	defer s.autoMu.Unlock()
+	if s.stopRequested.Load() {
+		return false, errors.New("демон завершает работу")
+	}
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -1527,6 +1555,9 @@ func (s *Server) startTrafficObserver() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
+			if s.stopRequested.Load() {
+				return
+			}
 			s.observeTraffic()
 		}
 	}()
@@ -1537,6 +1568,9 @@ func (s *Server) startSystemVPNWatcher() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
+			if s.stopRequested.Load() {
+				return
+			}
 			s.reapplyIfConfigModeChanged()
 		}
 	}()

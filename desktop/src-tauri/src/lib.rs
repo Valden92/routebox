@@ -1,16 +1,37 @@
+mod router_process;
+
+use router_process::RouterProcess;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 const API_ADDR: &str = "127.0.0.1:47891";
 /// Согласовано с desktop/src/status-ui.ts (MIN_API_VERSION).
 const MIN_API_VERSION: u64 = 7;
 
-struct DaemonState(Mutex<Option<Child>>);
+#[derive(Default)]
+struct CloseGate(AtomicU8);
+impl CloseGate {
+    fn begin(&self) -> bool {
+        self.0
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+    fn finish(&self, success: bool) {
+        self.0.store(if success { 2 } else { 0 }, Ordering::Release);
+    }
+    fn finished(&self) -> bool {
+        self.0.load(Ordering::Acquire) == 2
+    }
+}
+struct AppLifetime {
+    gate: CloseGate,
+    router: Result<Option<RouterProcess>, String>,
+}
 
 fn read_api_token(path: &std::path::Path) -> Result<String, String> {
     let metadata = std::fs::symlink_metadata(path).map_err(|_| "API credential unavailable")?;
@@ -152,9 +173,11 @@ fn api_health_ok() -> bool {
 
 /// true = можно пользоваться; false = порта нет / мёртвый процесс.
 /// None version при живом health — не считаем «устаревшим» (флейк парсинга).
+#[derive(Clone, Copy)]
 enum ApiProbe {
     Ok,
     Outdated(u64),
+    Unresponsive,
     Down,
 }
 
@@ -188,23 +211,22 @@ fn probe_api() -> ApiProbe {
         }
         std::thread::sleep(Duration::from_millis(150));
     }
-    ApiProbe::Down
+    ApiProbe::Unresponsive
 }
 
-fn stop_stale_daemon() {
-    let _ = Command::new("killall")
-        .arg("vpn-router-daemon")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    // Дождаться освобождения порта (иначе новый процесс не займёт :47891).
-    for _ in 0..40 {
-        if !api_running() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
+#[derive(Debug, PartialEq, Eq)]
+enum StartupAction {
+    Attach,
+    KeepExisting,
+    Spawn,
+}
+
+fn startup_action(probe: ApiProbe) -> StartupAction {
+    match probe {
+        ApiProbe::Ok => StartupAction::Attach,
+        ApiProbe::Outdated(_) | ApiProbe::Unresponsive => StartupAction::KeepExisting,
+        ApiProbe::Down => StartupAction::Spawn,
     }
-    std::thread::sleep(Duration::from_millis(200));
 }
 
 fn daemon_log_path() -> PathBuf {
@@ -212,111 +234,155 @@ fn daemon_log_path() -> PathBuf {
 }
 
 fn config_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        let p = PathBuf::from(home).join(".config/vpn-router");
-        let _ = std::fs::create_dir_all(&p);
-        return p;
-    }
-    PathBuf::from(".")
+    let path = api_token_path(
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        std::env::var_os("HOME").map(PathBuf::from),
+    )
+    .ok()
+    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+    .unwrap_or_else(|| PathBuf::from("."));
+    let _ = std::fs::create_dir_all(&path);
+    path
 }
 
-fn ensure_daemon() -> Option<Child> {
-    match probe_api() {
-        ApiProbe::Ok => {
-            eprintln!("vpn-router: API ok (version {MIN_API_VERSION}+) at http://{API_ADDR}");
-            return None;
+fn wait_for_daemon() -> bool {
+    for _ in 0..75 {
+        match probe_api() {
+            ApiProbe::Ok => return true,
+            ApiProbe::Outdated(_) | ApiProbe::Unresponsive => return false,
+            ApiProbe::Down => std::thread::sleep(Duration::from_millis(200)),
         }
-        ApiProbe::Outdated(v) => {
-            eprintln!(
-                "vpn-router: устаревший демон apiVersion={v} (нужен {MIN_API_VERSION}+) — перезапускаем"
-            );
-            stop_stale_daemon();
-        }
-        ApiProbe::Down => {}
     }
+    eprintln!(
+        "vpn-router: API не подтвердил готовность; см. {}",
+        daemon_log_path().display()
+    );
+    false
+}
 
-    let path = daemon_path();
-    if !path.exists() {
-        eprintln!("vpn-router: не найден бинарник демона: {}", path.display());
-        return None;
-    }
-
-    let log_path = daemon_log_path();
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .ok();
-
-    let mut cmd = Command::new(&path);
-    cmd.args(["--listen", API_ADDR]);
-    cmd.stdout(Stdio::null());
-    if let Some(f) = log_file {
-        cmd.stderr(Stdio::from(f));
-    } else {
-        cmd.stderr(Stdio::null());
-    }
-    for (key, value) in std::env::vars() {
-        cmd.env(key, value);
-    }
-
-    match cmd.spawn() {
-        Ok(child) => {
-            // до ~15 с: холодный старт Go / медленный диск
-            for i in 0..75 {
-                match probe_api() {
-                    ApiProbe::Ok => {
-                        eprintln!("vpn-router: демон запущен http://{API_ADDR}");
-                        return Some(child);
-                    }
-                    ApiProbe::Outdated(v) => {
-                        eprintln!(
-                            "vpn-router: демон поднялся со старым apiVersion={v}, ждём/пересоберьте make build"
-                        );
-                    }
-                    ApiProbe::Down => {}
-                }
-                if i == 20 {
-                    eprintln!("vpn-router: ждём ответ API… (лог: {})", log_path.display());
-                }
-                std::thread::sleep(Duration::from_millis(200));
+fn ensure_daemon() -> Result<Option<RouterProcess>, String> {
+    let probe = probe_api();
+    match startup_action(probe) {
+        StartupAction::Attach => RouterProcess::capture()?.map(Some).ok_or_else(|| {
+            "Не удалось подтвердить владельца Router BOX. Обновите демон через make dev".into()
+        }),
+        StartupAction::KeepExisting => {
+            if let ApiProbe::Outdated(version) = probe {
+                eprintln!("vpn-router: API {version} устарел, нужен {MIN_API_VERSION}+; обновите демон через make dev");
+            } else {
+                eprintln!("vpn-router: порт занят, но совместимость API не подтверждена; процесс сохранён");
             }
-            eprintln!(
-                "vpn-router: демон не ответил /api/version за 15с — см. {}",
-                log_path.display()
-            );
-            Some(child)
+            Ok(None)
         }
-        Err(e) => {
-            eprintln!("vpn-router: не удалось запустить демон: {e}");
-            None
+        StartupAction::Spawn => {
+            let path = daemon_path();
+            if !path.exists() {
+                return Err(format!("Не найден демон: {}", path.display()));
+            }
+            let mut cmd = Command::new(&path);
+            cmd.args(["--listen", API_ADDR])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null());
+            let log = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(daemon_log_path());
+            cmd.stderr(log.map(Stdio::from).unwrap_or_else(|_| Stdio::null()));
+            let mut child = cmd
+                .spawn()
+                .map_err(|error| format!("Не удалось запустить демон: {error}"))?;
+            let owner = RouterProcess::capture_child(child.id(), &path);
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            if wait_for_daemon() {
+                // Concurrent UI/startup may have lost the instance lock. Bind
+                // window close to the router we actually attached to, not the
+                // short-lived losing child.
+                if let Ok(Some(attached)) = RouterProcess::capture() {
+                    return Ok(Some(attached));
+                }
+            }
+            owner
         }
     }
+}
+
+fn begin_app_shutdown(app: tauri::AppHandle) {
+    if !app.state::<AppLifetime>().gate.begin() {
+        return;
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_title("Router BOX — завершение работы…");
+    }
+    std::thread::spawn(move || {
+        let result = {
+            let lifetime = app.state::<AppLifetime>();
+            match &lifetime.router {
+                Ok(Some(router)) => router.stop(Duration::from_secs(60)),
+                Ok(None) => Ok(()),
+                // Allow retry after a transient startup/ownership failure. Never
+                // substitute killall, SIGKILL, or a signal to an unverified PID.
+                Err(_) => match RouterProcess::capture() {
+                    Ok(Some(router)) => router.stop(Duration::from_secs(60)),
+                    Ok(None) if !api_running() => Ok(()),
+                    Ok(None) => Err(
+                        "Нет подтверждённого владельца. Выполните make stop и повторите закрытие"
+                            .into(),
+                    ),
+                    Err(error) => Err(error),
+                },
+            }
+        };
+        app.state::<AppLifetime>().gate.finish(result.is_ok());
+        if let Err(error) = result {
+            eprintln!("vpn-router: корректное завершение не подтверждено: {error}");
+            let _ = app.emit("router-shutdown-failed", ());
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window
+                    .set_title("Router BOX — не удалось завершить демон; выполните make stop");
+                let _ = window.show();
+            }
+        } else {
+            app.exit(0);
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![local_api_token])
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let child = ensure_daemon();
-            app.manage(DaemonState(Mutex::new(child)));
+            let router = ensure_daemon();
+            if let Err(error) = &router {
+                eprintln!("vpn-router: {error}");
+            }
+            app.manage(AppLifetime {
+                gate: CloseGate::default(),
+                router,
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                if let Some(state) = window.app_handle().try_state::<DaemonState>() {
-                    if let Ok(mut guard) = state.0.lock() {
-                        if let Some(mut child) = guard.take() {
-                            let _ = child.kill();
-                        }
-                    }
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    begin_app_shutdown(window.app_handle().clone());
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    app.run(|app, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if !app.state::<AppLifetime>().gate.finished() {
+                api.prevent_exit();
+                begin_app_shutdown(app.clone());
+            }
+        }
+    });
 }
 
 #[cfg(all(test, unix))]
@@ -390,5 +456,43 @@ mod credential_tests {
         assert!(read_api_token(&link).is_err());
         std::fs::remove_file(&path).unwrap();
         assert!(read_api_token(&path).is_err());
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{startup_action, ApiProbe, CloseGate, StartupAction};
+    #[test]
+    fn does_not_replace_an_existing_api_from_the_ui() {
+        assert_eq!(startup_action(ApiProbe::Ok), StartupAction::Attach);
+        assert_eq!(
+            startup_action(ApiProbe::Outdated(1)),
+            StartupAction::KeepExisting
+        );
+        assert_eq!(
+            startup_action(ApiProbe::Unresponsive),
+            StartupAction::KeepExisting
+        );
+        assert_eq!(startup_action(ApiProbe::Down), StartupAction::Spawn);
+    }
+    #[test]
+    fn repeated_close_events_wait_for_one_confirmed_shutdown() {
+        let gate = CloseGate::default();
+        assert!(gate.begin());
+        assert!(!gate.begin());
+        assert!(!gate.finished());
+        gate.finish(true);
+        assert!(gate.finished());
+        assert!(!gate.begin());
+    }
+    #[test]
+    fn failed_shutdown_keeps_ui_open_and_allows_retry() {
+        let gate = CloseGate::default();
+        assert!(gate.begin());
+        gate.finish(false);
+        assert!(!gate.finished());
+        assert!(gate.begin());
+        gate.finish(true);
+        assert!(gate.finished());
     }
 }

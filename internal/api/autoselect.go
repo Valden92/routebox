@@ -217,6 +217,14 @@ func AdjustAutoSelectWeight(weights map[string]int, nodeID string, ok bool) map[
 }
 
 func (s *Server) autoSelectNode(w http.ResponseWriter, r *http.Request) {
+	// Registration is serialized with shutdown, so every launched probe is
+	// canceled and joined before the router relinquishes host ownership.
+	s.runtimeMu.RLock()
+	defer s.runtimeMu.RUnlock()
+	if s.stopRequested.Load() || s.shuttingDown {
+		writeJSONError(w, http.StatusServiceUnavailable, "shutting_down", "Демон завершает работу")
+		return
+	}
 	if !s.autoSelectMu.TryLock() {
 		http.Error(w, "подбор сервера уже выполняется; дождитесь его завершения", http.StatusConflict)
 		return

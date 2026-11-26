@@ -34,6 +34,7 @@ import { formatPing } from "./ping-label";
 import { AutoSelectSession } from "./autoselect-session";
 import { AutoRoutingController, autoRoutingStatus, autoRoutingTransport } from "./auto-routing";
 import { renderConfigurationState } from "./config-state";
+import { setupShutdownNotice } from "./desktop-lifecycle";
 import { ModalLifecycle } from "./modal-lifecycle";
 import {
   RulesController,
@@ -1280,6 +1281,7 @@ async function checkApiVersion() {
 
 window.addEventListener("DOMContentLoaded", () => {
   setupTabs();
+  void setupShutdownNotice((message) => showToast(message, true)).catch(console.error);
 
   el<HTMLInputElement>("#auto-routing-enabled").addEventListener("change", async (event) => {
     try {
