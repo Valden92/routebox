@@ -134,10 +134,6 @@ test("development Makefile refuses runtime targets, including its default goal",
     ["desktop"],
     ["sync"],
     ["recover-network"],
-    ["service-install"],
-    ["service-start"],
-    ["service-restart"],
-    ["service-stop"],
   ]) {
     const result = spawnSync(
       "make",
