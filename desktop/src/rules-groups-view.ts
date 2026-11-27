@@ -1,3 +1,4 @@
+import { groupRulesByDomain } from "./rule-domains";
 import type { DomainRule } from "./api";
 import {
   RulesDisclosure,
@@ -63,7 +64,7 @@ export class RulesGroupsView {
     renderList: (list: HTMLElement, rules: DomainRule[], empty: string) => void,
   ) {
     // Capture a click whose native toggle event is still queued before refreshing.
-    for (const details of this.details) {
+    for (const details of this.root.querySelectorAll<HTMLDetailsElement>("[data-rule-group]")) {
       const key = details.dataset.ruleGroup as RuleGroupKey;
       if (details.open !== this.disclosure.open(key)) this.disclosure.set(key, details.open);
     }
@@ -83,7 +84,35 @@ export class RulesGroupsView {
         details.classList.toggle("hidden", group.rules.length === 0);
         this.count(key, group.rules.length, group.total, Boolean(filterKey));
         const list = this.root.querySelector<HTMLElement>(`[data-rules="${key}"]`)!;
-        renderList(list, group.rules, "Правил нет.");
+        list.replaceChildren();
+        for (const domain of groupRulesByDomain(group.rules)) {
+          const item = list.ownerDocument.createElement("li");
+          item.className = "rule-domain-family";
+          const details = list.ownerDocument.createElement("details");
+          details.className = "rules-domain-group";
+          const domainKey: RuleGroupKey = `${key}:domain:${domain.domain}`;
+          details.dataset.ruleGroup = domainKey;
+          details.open = this.disclosure.open(domainKey);
+          details.addEventListener("toggle", () => {
+            if (details.isConnected && details.open !== this.disclosure.open(domainKey)) {
+              this.disclosure.set(domainKey, details.open);
+            }
+          });
+          const summary = list.ownerDocument.createElement("summary");
+          const label = list.ownerDocument.createElement("span");
+          label.className = "rule-domain-name";
+          label.textContent = domain.domain;
+          const count = list.ownerDocument.createElement("span");
+          count.className = "rules-group-count";
+          count.textContent = String(domain.rules.length);
+          summary.append(label, count);
+          const rows = list.ownerDocument.createElement("ul");
+          rows.className = "rules-list";
+          renderList(rows, domain.rules, "Правил нет.");
+          details.append(summary, rows);
+          item.append(details);
+          list.append(item);
+        }
       }
     }
     this.setBusy(this.busy);

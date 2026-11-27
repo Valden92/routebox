@@ -7,7 +7,10 @@ require (
 	github.com/go-chi/cors v1.2.1
 	github.com/google/uuid v1.6.0
 	golang.org/x/crypto v0.36.0
+	golang.org/x/net v0.37.0
 	golang.org/x/sys v0.31.0
 )
 
 require gopkg.in/yaml.v3 v3.0.1
+
+require golang.org/x/text v0.23.0 // indirect

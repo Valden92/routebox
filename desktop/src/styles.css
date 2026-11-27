@@ -1047,3 +1047,31 @@ button.secondary:not(:disabled) {
     flex-wrap: wrap;
   }
 }
+
+.rule-domain-family + .rule-domain-family {
+  border-top: 1px solid var(--border);
+}
+
+.rules-domain-group > summary {
+  padding: 0.65rem 0.6rem;
+  color: #b5bdcc;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.rule-domain-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rules-domain-group .rules-list {
+  padding-left: 0.65rem;
+  border-left: 1px solid var(--border);
+  margin-left: 0.75rem;
+}
+
+.rules-domain-group .rule-main {
+  min-width: 0;
+  flex-basis: 220px;
+  overflow-wrap: anywhere;
+}
