@@ -697,6 +697,13 @@ ul {
   margin: 0.25rem 0 1rem;
 }
 
+.rules-toolbar input,
+.rules-toolbar select {
+  height: 2.25rem;
+  min-height: 0;
+  padding-block: 0;
+}
+
 .rules-toolbar input {
   flex: 1;
   min-width: 240px;
