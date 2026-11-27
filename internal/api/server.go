@@ -1146,9 +1146,13 @@ func (s *Server) reconcileSelectedNodeAfterRefresh(subID string, previous, next 
 
 func (s *Server) listRules(w http.ResponseWriter, _ *http.Request) {
 	st := s.Store.Get()
-	domains := st.DomainRules
-	if domains == nil {
-		domains = []config.DomainRule{}
+	type domainView struct {
+		config.DomainRule
+		DomainGroup string `json:"domainGroup"`
+	}
+	domains := make([]domainView, 0, len(st.DomainRules))
+	for _, rule := range st.DomainRules {
+		domains = append(domains, domainView{rule, routing.DomainRuleGroup(rule.Pattern)})
 	}
 	apps := st.AppRules
 	if apps == nil {

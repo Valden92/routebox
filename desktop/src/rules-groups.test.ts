@@ -131,3 +131,43 @@ describe("disclosure state", () => {
     expect(state.open("auto")).toBe(false);
   });
 });
+
+describe("domain disclosure within routes", () => {
+  it("keeps the same domain independent across source/route groups and reloads", () => {
+    const saved = storage();
+    const state = new RulesDisclosure(saved);
+    state.set("auto-direct:domain:example.org", true);
+    const restored = new RulesDisclosure(saved);
+    expect(restored.open("auto-direct:domain:example.org")).toBe(true);
+    expect(restored.open("manual-direct:domain:example.org")).toBe(false);
+    expect(restored.open("auto-personal:domain:example.org")).toBe(false);
+  });
+  it("temporarily opens domain matches and restores the saved layout after filtering", () => {
+    const state = new RulesDisclosure();
+    state.set("auto-direct:domain:example.org", false);
+    state.setFilter("search");
+    expect(state.open("auto-direct:domain:example.org")).toBe(true);
+    state.set("auto-direct:domain:example.org", false);
+    state.setFilter("search");
+    expect(state.open("auto-direct:domain:example.org")).toBe(false);
+    state.setFilter("");
+    expect(state.open("auto-direct:domain:example.org")).toBe(false);
+  });
+  it("ignores malformed or unbounded domain keys in stored layout", () => {
+    const saved = storage(
+      JSON.stringify({
+        version: 1,
+        open: {
+          "auto-direct:domain:": true,
+          "other-direct:domain:example.org": true,
+          ["auto-direct:domain:" + "a".repeat(256)]: true,
+          "auto-direct:domain:example.org": true,
+        },
+      }),
+    );
+    const state = new RulesDisclosure(saved);
+    expect(state.open("auto-direct:domain:")).toBe(false);
+    expect(state.open(`auto-direct:domain:${"a".repeat(256)}`)).toBe(false);
+    expect(state.open("auto-direct:domain:example.org")).toBe(true);
+  });
+});

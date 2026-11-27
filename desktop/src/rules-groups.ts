@@ -11,7 +11,8 @@ export const rulePaths = [
   { key: "work", title: "Системный VPN" },
 ] as const;
 export type RuleSource = (typeof ruleSources)[number]["key"];
-export type RuleGroupKey = RuleSource | `${RuleSource}-${RoutePath}`;
+type RouteGroupKey = `${RuleSource}-${RoutePath}`;
+export type RuleGroupKey = RuleSource | RouteGroupKey | `${RouteGroupKey}:domain:${string}`;
 export interface RulesFilters {
   query: string;
   path: RoutePath | "all";
@@ -52,6 +53,19 @@ const validKeys: RuleGroupKey[] = ruleSources.flatMap(({ key }) => [
   key,
   ...rulePaths.map((path): RuleGroupKey => `${key}-${path.key}`),
 ]);
+function validGroupKey(key: string): key is RuleGroupKey {
+  return (
+    validKeys.includes(key as RuleGroupKey) ||
+    validKeys.some(
+      (base) =>
+        base.includes("-") &&
+        key.startsWith(`${base}:domain:`) &&
+        key.length > base.length + 8 &&
+        key.length <= base.length + 8 + 255,
+    )
+  );
+}
+
 type DisclosureValues = Partial<Record<RuleGroupKey, boolean>>;
 type DisclosureStorage = Pick<Storage, "getItem" | "setItem">;
 
@@ -68,11 +82,8 @@ export class RulesDisclosure {
       const values = "open" in data ? data.open : null;
       if (!values || typeof values !== "object" || Array.isArray(values)) return;
       const entries = values as Record<string, unknown>;
-      for (const key of validKeys) {
-        const value = entries[key];
-        if (Object.prototype.hasOwnProperty.call(entries, key) && typeof value === "boolean") {
-          this.saved[key] = value;
-        }
+      for (const [key, value] of Object.entries(entries)) {
+        if (validGroupKey(key) && typeof value === "boolean") this.saved[key] = value;
       }
     } catch {
       // Unavailable storage or old/corrupt data must not hide the controls.

@@ -259,6 +259,7 @@ export interface SiteProbe {
 }
 
 export interface DomainRule {
+  domainGroup?: string;
   id: string;
   pattern: string;
   path: RoutePath;
