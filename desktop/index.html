@@ -196,9 +196,14 @@
               <option value="direct">Без VPN</option>
               <option value="work">Системный VPN</option>
               <option value="personal">Личный VPN</option>
+              <option value="block">Запрет</option>
             </select>
             <button type="submit" id="btn-add-rule">Добавить правило</button>
           </form>
+          <p class="muted">
+            «Запрет» важнее остальных правил и действует на новые соединения через Router BOX. Уже
+            открытые соединения сохраняются. Для отмены отключите или удалите правило.
+          </p>
           <p
             id="rules-operation-status"
             class="muted rules-operation-status"
@@ -217,6 +222,7 @@
               <option value="personal">Личный VPN</option>
               <option value="direct">Без VPN</option>
               <option value="work">Системный VPN</option>
+              <option value="block">Запрет</option>
             </select>
             <select id="rules-enabled-filter" aria-label="Фильтр по состоянию">
               <option value="all">Все состояния</option>

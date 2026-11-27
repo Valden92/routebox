@@ -161,9 +161,9 @@ func TestLiveConfigSharesDomainSetsWithDNSAndPreservesCoexist(t *testing.T) {
 		if err := json.Unmarshal(body, &cfg); err != nil {
 			t.Fatal(err)
 		}
-		count := 4
+		count := 5
 		if work {
-			count = 6
+			count = 7
 		}
 		if len(cfg.Route.Sets) != count {
 			t.Fatalf("sets=%d", len(cfg.Route.Sets))

@@ -113,6 +113,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type RoutePath = "direct" | "work" | "personal";
+export type RuleAction = RoutePath | "block";
 
 export interface AutoRoutingSettings {
   autoDetectRouting: boolean;
@@ -262,7 +263,7 @@ export interface DomainRule {
   domainGroup?: string;
   id: string;
   pattern: string;
-  path: RoutePath;
+  path: RuleAction;
   source?: "manual" | "auto" | "import" | "";
   enabled: boolean;
   createdAt?: string;

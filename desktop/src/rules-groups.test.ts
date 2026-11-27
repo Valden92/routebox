@@ -28,7 +28,7 @@ describe("rule groups", () => {
     const [auto, manual] = groupDomainRules(rules, all);
     expect(auto.total).toBe(2);
     expect(manual.total).toBe(2);
-    expect(auto.groups.map((g) => g.key)).toEqual(["personal", "direct", "work"]);
+    expect(auto.groups.map((g) => g.key)).toEqual(["personal", "direct", "work", "block"]);
     expect(manual.groups[0].rules.map((r) => r.id)).toEqual(["3"]);
     expect(manual.groups[2].rules.map((r) => r.id)).toEqual(["2"]);
     expect(JSON.stringify(rules)).toBe(before);
@@ -133,6 +133,22 @@ describe("disclosure state", () => {
 });
 
 describe("domain disclosure within routes", () => {
+  it("groups and filters deny actions independently from network routes", () => {
+    const denied: DomainRule = {
+      id: "deny",
+      pattern: "*.ads.test",
+      path: "block",
+      source: "manual",
+      enabled: true,
+    };
+    const [auto, manual] = groupDomainRules([...rules, denied], { ...all, path: "block" });
+    expect(auto.matched).toBe(0);
+    expect(manual.matched).toBe(1);
+    expect(manual.groups.find((g) => g.key === "block")?.rules).toEqual([denied]);
+    const saved = storage();
+    new RulesDisclosure(saved).set("manual-block:domain:ads.test", true);
+    expect(new RulesDisclosure(saved).open("manual-block:domain:ads.test")).toBe(true);
+  });
   it("keeps the same domain independent across source/route groups and reloads", () => {
     const saved = storage();
     const state = new RulesDisclosure(saved);

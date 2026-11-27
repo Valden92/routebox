@@ -155,3 +155,38 @@ func TestRulePublicationDoesNotClaimRuntimeAcknowledgement(t *testing.T) {
 		t.Fatalf("failure discarded core: %+v", state)
 	}
 }
+
+func TestDenyPublicationAndRemovalPreserveCore(t *testing.T) {
+	l, st := liveRuleFixture(t)
+	original := append([]byte(nil), l.core...)
+	validate := func(_ context.Context, path string) error {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return singbox.ValidateConfigBytes(body, false)
+	}
+	st.DomainRules = []config.DomainRule{{Pattern: "*.ads.test", Path: config.RouteBlock, Source: "manual", Enabled: true}}
+	for _, enabled := range []bool{true, false, true} {
+		st.DomainRules[0].Enabled = enabled
+		_, changed, err := l.publish(context.Background(), st, validate)
+		if err != nil || !changed {
+			t.Fatalf("deny publish: %v %v", changed, err)
+		}
+		body, err := os.ReadFile(l.configPath)
+		if err != nil || !bytes.Equal(original, body) {
+			t.Fatal("deny restarted/replaced core")
+		}
+		body, err = os.ReadFile(filepath.Join(l.dir, "block-domains.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(body, []byte("ads.test")) != enabled {
+			t.Fatal("deny enable/disable not published")
+		}
+	}
+	st.DomainRules = nil
+	if _, changed, err := l.publish(context.Background(), st, validate); err != nil || !changed {
+		t.Fatalf("deny removal: %v %v", changed, err)
+	}
+}

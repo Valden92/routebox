@@ -232,7 +232,7 @@ func (s *Server) routes() {
 	s.router = r
 }
 
-const apiVersion = 7
+const apiVersion = 8
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -1173,6 +1173,18 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
+	if req.Path == config.RouteBlock {
+		if req.ProcessName != "" {
+			http.Error(w, "запрет пока доступен только для доменных правил", http.StatusBadRequest)
+			return
+		}
+		pattern, err := routing.NormalizeBlockPattern(req.Pattern)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.Pattern = pattern
+	}
 	id := uuid.NewString()
 	status := "created"
 	err := s.Store.Update(func(st *config.Settings) {
@@ -1186,7 +1198,21 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 		if pattern == "" {
 			pattern = req.Pattern
 		}
-		if idx := routing.FindDomainRuleIndex(st.DomainRules, pattern); idx >= 0 {
+		idx := -1
+		for i, existing := range st.DomainRules {
+			if existing.Pattern == pattern {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 && req.Path != config.RouteBlock {
+			idx = routing.FindDomainRuleIndex(st.DomainRules, pattern)
+			// Adding a child must not shrink the scope of a suffix deny.
+			if idx >= 0 && st.DomainRules[idx].Path == config.RouteBlock {
+				idx = -1
+			}
+		}
+		if idx >= 0 {
 			previous := st.DomainRules[idx]
 			status = "updated"
 			if previous.Pattern == pattern && previous.Path == req.Path && previous.Source == "manual" && previous.Enabled {
@@ -1230,13 +1256,31 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var updated bool
+	var validationErr error
 	err := s.Store.Update(func(st *config.Settings) {
 		for i := range st.DomainRules {
 			if st.DomainRules[i].ID != id {
 				continue
 			}
+			path, pattern := st.DomainRules[i].Path, st.DomainRules[i].Pattern
+			if req.Path != "" {
+				path = req.Path
+			}
 			if req.Pattern != "" {
-				st.DomainRules[i].Pattern = routing.NormalizeRulePattern(req.Pattern)
+				pattern = req.Pattern
+			}
+			if path == config.RouteBlock {
+				normalized, err := routing.NormalizeBlockPattern(pattern)
+				if err != nil {
+					validationErr = err
+					return
+				}
+				st.DomainRules[i].Pattern = normalized
+			}
+			if req.Pattern != "" {
+				if path != config.RouteBlock {
+					st.DomainRules[i].Pattern = routing.NormalizeRulePattern(req.Pattern)
+				}
 			}
 			if req.Path != "" {
 				st.DomainRules[i].Path = req.Path
@@ -1252,6 +1296,10 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request) {
 			if st.AppRules[i].ID != id {
 				continue
 			}
+			if req.Path == config.RouteBlock {
+				validationErr = errors.New("запрет пока доступен только для доменных правил")
+				return
+			}
 			if req.Path != "" {
 				st.AppRules[i].Path = req.Path
 			}
@@ -1262,6 +1310,10 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	})
+	if validationErr != nil {
+		http.Error(w, validationErr.Error(), http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -1415,6 +1467,9 @@ func (s *Server) autoLearnHost(ctx context.Context, raw string, allowReapply, ba
 	if background && !s.Store.Get().AutoDetectRouting {
 		return autoCheckResp{Host: host}, nil
 	}
+	if blocked, ok := routing.BlockingDomainRule(s.Store.Get().DomainRules, host); ok {
+		return autoCheckResp{Host: host, Rule: blocked, Message: "Домен запрещён правилом «" + blocked.Pattern + "»; проверка путей не выполнялась"}, nil
+	}
 	report := s.checkSiteReport(ctx, host)
 	best, hasBest := probe.BestAvailablePath(report)
 	now := time.Now()
@@ -1430,6 +1485,13 @@ func (s *Server) autoLearnHost(ctx context.Context, raw string, allowReapply, ba
 	err := s.Store.Update(func(cur *config.Settings) {
 		// A probe can finish after background learning has been switched off.
 		if background && (!cur.AutoDetectRouting || ctx.Err() != nil) {
+			return
+		}
+		// A deny may have been added while the probe was in flight.
+		if blocked, ok := routing.BlockingDomainRule(cur.DomainRules, host); ok {
+			rule, ruleFound = blocked, true
+			resp.Message = "Домен запрещён правилом «" + blocked.Pattern + "»"
+			resp.SuggestedPath = ""
 			return
 		}
 		idx := routing.FindDomainRuleIndex(cur.DomainRules, host)
@@ -1512,6 +1574,9 @@ func (s *Server) passiveLearnWorkHost(raw string) (bool, error) {
 	changed := false
 	err := s.Store.Update(func(cur *config.Settings) {
 		if !cur.AutoDetectRouting {
+			return
+		}
+		if _, blocked := routing.BlockingDomainRule(cur.DomainRules, host); blocked {
 			return
 		}
 		idx := routing.FindDomainRuleIndex(cur.DomainRules, host)

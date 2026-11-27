@@ -10,7 +10,7 @@ import (
 	"github.com/Valden92/routebox/internal/subscription"
 )
 
-var liveRulePaths = []string{"direct", "proxy", "work"}
+var liveRulePaths = []string{"block", "direct", "proxy", "work"}
 
 // LiveRuleFiles compiles disjoint matches so grouping by outbound does not
 // change manual/automatic, exact/suffix, or first application rule precedence.
@@ -62,6 +62,9 @@ func LiveRuleFiles(st config.Settings, personal, work bool) (map[string][]byte, 
 			{"process_name": []string{"routebox-metadata"}, "invert": true},
 		}}
 		for kind, rules := range map[string][]map[string]any{"domains": domains[path], "apps": append([]map[string]any{never}, apps[path]...)} {
+			if path == "block" && kind == "apps" {
+				continue
+			}
 			if rules == nil {
 				rules = []map[string]any{}
 			}
@@ -105,21 +108,33 @@ func WriteLiveRouterConfig(path string, node *subscription.Node, st config.Setti
 	}
 	route := cfg["route"].(map[string]any)
 	dns := cfg["dns"].(map[string]any)
-	var sets, domainRoutes, appRoutes, dnsRules []any
+	var sets, domainRoutes, appRoutes, dnsRules, blockRoutes []any
 	personal := st.PersonalVPN.Enabled && node != nil
 	for _, tag := range liveRulePaths {
 		if tag == "proxy" && !personal || tag == "work" && !snapshot.SystemVPNUp {
 			continue
 		}
 		for _, kind := range []string{"domains", "apps"} {
+			if tag == "block" && kind == "apps" {
+				continue
+			}
 			name := tag + "-" + kind
 			sets = append(sets, map[string]any{"type": "local", "tag": name, "format": "source", "path": filepath.Join(ruleDir, name+".json")})
+		}
+		if tag == "block" {
+			blockRoutes = append(blockRoutes, map[string]any{"rule_set": []string{"block-domains"}, "action": "reject"})
+			dnsRules = append(dnsRules, map[string]any{"rule_set": []string{"block-domains"}, "action": "reject"})
+			continue
 		}
 		domainRoutes = append(domainRoutes, map[string]any{"rule_set": []string{tag + "-domains"}, "outbound": tag})
 		appRoutes = append(appRoutes, map[string]any{"rule_set": []string{tag + "-apps"}, "outbound": tag})
 		dnsRules = append(dnsRules, map[string]any{"rule_set": []string{tag + "-domains"}, "server": "dns-" + tag})
 	}
 	rules := route["rules"].([]any)
+	// Deny after sniff/DNS hijack, before loopback, probe, endpoint and work bypasses.
+	ordered := append([]any{}, rules[:2]...)
+	ordered = append(ordered, blockRoutes...)
+	rules = append(ordered, rules[2:]...)
 	// The final private-IP fallback stays after explicit domains and apps.
 	fallback := rules[len(rules)-1]
 	rules = append(rules[:len(rules)-1], domainRoutes...)
