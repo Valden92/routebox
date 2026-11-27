@@ -698,7 +698,8 @@ ul {
 }
 
 .rules-toolbar input,
-.rules-toolbar select {
+.rules-toolbar select,
+.rule-row select {
   height: 2.25rem;
   min-height: 0;
   padding-block: 0;
