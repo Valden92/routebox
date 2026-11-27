@@ -20,6 +20,7 @@ const (
 	RouteDirect   RoutePath = "direct"
 	RouteWork     RoutePath = "work"
 	RoutePersonal RoutePath = "personal"
+	RouteBlock    RoutePath = "block" // policy action; not a network interface
 )
 
 type DomainRule struct {

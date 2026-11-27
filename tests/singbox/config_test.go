@@ -113,6 +113,7 @@ func TestPathTagIfAvailable(t *testing.T) {
 		{config.RoutePersonal, false, true, "proxy", false},
 		{config.RouteWork, false, true, "work", true},
 		{config.RouteWork, true, false, "work", false},
+		{config.RouteBlock, true, true, "", false},
 	}
 	for _, tc := range cases {
 		tag, ok := singbox.PathTagIfAvailable(tc.path, tc.personal, tc.work)

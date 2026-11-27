@@ -1,4 +1,4 @@
-import type { DomainRule, RoutePath } from "./api";
+import type { DomainRule, RuleAction } from "./api";
 import { filterRules, partitionDomainRules } from "./rules-util";
 
 export const ruleSources = [
@@ -9,13 +9,14 @@ export const rulePaths = [
   { key: "personal", title: "Личный VPN" },
   { key: "direct", title: "Без VPN" },
   { key: "work", title: "Системный VPN" },
+  { key: "block", title: "Запрет" },
 ] as const;
 export type RuleSource = (typeof ruleSources)[number]["key"];
-type RouteGroupKey = `${RuleSource}-${RoutePath}`;
+type RouteGroupKey = `${RuleSource}-${RuleAction}`;
 export type RuleGroupKey = RuleSource | RouteGroupKey | `${RouteGroupKey}:domain:${string}`;
 export interface RulesFilters {
   query: string;
-  path: RoutePath | "all";
+  path: RuleAction | "all";
   enabled: "all" | "enabled" | "disabled";
 }
 

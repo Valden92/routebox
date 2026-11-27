@@ -394,7 +394,11 @@ func buildDNSRules(st config.Settings, personalAvailable, sysUp bool, corpDNS st
 		*dnsServers = append(*dnsServers, dnsUDPServer("dns-work", corpDNS, "work"))
 	}
 	for _, rule := range compileDomainRules(st, personalAvailable, workAvailable) {
-		rules = append(rules, domainMatchRule(rule.pattern, map[string]any{"server": rule.dns}))
+		action := map[string]any{"server": rule.dns}
+		if rule.outbound == "block" {
+			action = map[string]any{"action": "reject"}
+		}
+		rules = append(rules, domainMatchRule(rule.pattern, action))
 	}
 	if workAvailable {
 		rules = append(rules, map[string]any{
@@ -437,8 +441,14 @@ func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, workRou
 	rules := []map[string]any{
 		{"action": "sniff", "timeout": "1s"},
 		{"protocol": "dns", "action": "hijack-dns"},
-		{"ip_cidr": []string{"127.0.0.0/8"}, "outbound": "direct"},
 	}
+	plan := compileDomainRules(st, personalAvailable, sysUp)
+	for _, rule := range plan {
+		if rule.outbound == "block" {
+			rules = append(rules, domainMatchRule(rule.pattern, map[string]any{"action": "reject"}))
+		}
+	}
+	rules = append(rules, map[string]any{"ip_cidr": []string{"127.0.0.0/8"}, "outbound": "direct"})
 	if personalAvailable {
 		rules = append(rules, map[string]any{
 			"inbound":  []string{"personal-probe-in"},
@@ -456,8 +466,10 @@ func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, workRou
 			})
 		}
 	}
-	for _, rule := range compileDomainRules(st, personalAvailable, sysUp) {
-		rules = append(rules, domainMatchRule(rule.pattern, map[string]any{"outbound": rule.outbound}))
+	for _, rule := range plan {
+		if rule.outbound != "block" {
+			rules = append(rules, domainMatchRule(rule.pattern, map[string]any{"outbound": rule.outbound}))
+		}
 	}
 	for _, a := range st.AppRules {
 		if !a.Enabled || a.ProcessName == "" {
@@ -485,6 +497,8 @@ func buildRoute(st config.Settings, node *subscription.Node, sysUp bool, workRou
 
 func pathTagIfAvailable(p config.RoutePath, personalAvailable, workAvailable bool) (string, bool) {
 	switch p {
+	case config.RouteBlock:
+		return "", false // Block is compiled as reject, never as an outbound or app route.
 	case config.RouteWork:
 		return "work", workAvailable
 	case config.RoutePersonal:

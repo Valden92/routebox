@@ -1,10 +1,10 @@
-import { ApiError, type RoutePath, type RulesResponse, type RuleAdditionStatus } from "./api";
+import { ApiError, type RuleAction, type RulesResponse, type RuleAdditionStatus } from "./api";
 
 import type { RuleSource } from "./rules-groups";
 
 export interface NewRule {
   pattern: string;
-  path: RoutePath;
+  path: RuleAction;
 }
 
 export interface RulesView {

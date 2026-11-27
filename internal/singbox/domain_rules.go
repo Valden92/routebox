@@ -15,7 +15,18 @@ type compiledDomainRule struct {
 // Resolve precedence before dropping unavailable paths, as traffic routing did before.
 func compileDomainRules(st config.Settings, personalAvailable, workAvailable bool) []compiledDomainRule {
 	var plan []compiledDomainRule
-	for _, rule := range routing.CollapseDomainRules(enabledDomainRules(st.DomainRules)) {
+	var allowed []config.DomainRule
+	for _, rule := range enabledDomainRules(st.DomainRules) {
+		if rule.Path == config.RouteBlock {
+			pattern, err := routing.NormalizeBlockPattern(rule.Pattern)
+			if err == nil {
+				plan = append(plan, compiledDomainRule{pattern: pattern, outbound: "block"})
+			}
+		} else {
+			allowed = append(allowed, rule)
+		}
+	}
+	for _, rule := range routing.CollapseDomainRules(allowed) {
 		tag, available := pathTagIfAvailable(rule.Path, personalAvailable, workAvailable)
 		if !available {
 			continue

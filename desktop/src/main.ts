@@ -11,6 +11,7 @@ import {
   type PersonalReadiness,
   type PingResult,
   type RoutePath,
+  type RuleAction,
   type RulesResponse,
   type SiteProbe,
   type StatusResponse,
@@ -79,11 +80,13 @@ import {
   type PersonalVpnBusy,
 } from "./status-ui";
 import { escapeHtml, routerModeHint, routerModeLabel, routerPriorityLabel } from "./ui-labels";
+import { saveRule } from "./rule-mutations";
 
-const pathLabels: Record<RoutePath, string> = {
+const pathLabels: Record<RuleAction, string> = {
   direct: "Без VPN",
   work: "Системный VPN",
   personal: "Личный VPN",
+  block: "Запрет",
 };
 
 function el<T extends HTMLElement>(sel: string): T {
@@ -1103,7 +1106,7 @@ async function loadSubscriptions() {
 }
 
 function rulePathSelect(rule: DomainRule): string {
-  const options = (Object.keys(pathLabels) as RoutePath[])
+  const options = (Object.keys(pathLabels) as RuleAction[])
     .map(
       (p) => `<option value="${p}"${rule.path === p ? " selected" : ""}>${pathLabels[p]}</option>`,
     )
@@ -1160,12 +1163,16 @@ function bindRuleControls(root: HTMLElement) {
   });
   root.querySelectorAll("[data-rule-path]").forEach((sel) => {
     sel.addEventListener("change", async () => {
-      await api(`/api/rules/${(sel as HTMLSelectElement).dataset.rulePath}`, {
-        method: "PUT",
-        body: JSON.stringify({ path: (sel as HTMLSelectElement).value }),
-      });
-      await loadRules(true);
-      showToast("Правило обновлено");
+      try {
+        await saveRule(`/api/rules/${(sel as HTMLSelectElement).dataset.rulePath}`, "PUT", {
+          path: (sel as HTMLSelectElement).value as RuleAction,
+        });
+        await loadRules(true);
+        showToast("Правило обновлено");
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "Не удалось изменить правило", true);
+        await loadRules(true);
+      }
     });
   });
   root.querySelectorAll("[data-rule-enabled]").forEach((inp) => {
@@ -1222,7 +1229,7 @@ function openClearRulesModal(source: RuleSource) {
 const rulesController = new RulesController(
   {
     load: () => api<RulesResponse>("/api/rules"),
-    add: (rule) => api("/api/rules", { method: "POST", body: JSON.stringify(rule) }),
+    add: (rule) => saveRule("/api/rules", "POST", rule),
     remove: (id) => api(`/api/rules/${id}`, { method: "DELETE" }),
     clear: (source, ids) =>
       api<{ deleted: number }>("/api/rules/clear", {
@@ -1534,7 +1541,7 @@ window.addEventListener("DOMContentLoaded", () => {
     try {
       const result = await rulesController.add({
         pattern: String(fd.get("pattern") || "").trim(),
-        path: fd.get("path") as RoutePath,
+        path: fd.get("path") as RuleAction,
       });
       if (result) {
         showToast(ruleAdditionMessage(result));
