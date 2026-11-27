@@ -2,15 +2,11 @@
 
 package apps
 
-import "context"
-
-type NetworkApp struct {
-	PID         int    `json:"pid"`
-	ProcessName string `json:"processName"`
-	ExecPath    string `json:"execPath,omitempty"`
-	Connections int    `json:"connections"`
-}
+import (
+	"context"
+	"errors"
+)
 
 func Scan(ctx context.Context) ([]NetworkApp, error) {
-	return nil, nil
+	return nil, errors.New("снимок сетевых сокетов доступен только в Linux")
 }

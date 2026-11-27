@@ -24,7 +24,7 @@
           <button class="tab active" data-tab="dashboard">Обзор</button>
           <button class="tab" data-tab="subscriptions">Подписки</button>
           <button class="tab" data-tab="rules">Правила</button>
-          <button class="tab" data-tab="apps">Приложения</button>
+          <button class="tab" data-tab="apps">Сетевые соединения</button>
           <button class="tab" data-tab="probe">Проверка сайта</button>
         </nav>
       </header>
@@ -238,9 +238,30 @@
         </section>
 
         <section id="tab-apps" class="panel">
-          <h3>Приложения с сетью</h3>
-          <button id="btn-scan-apps" class="secondary">Сканировать</button>
-          <ul id="apps-list"></ul>
+          <div class="connections-toolbar">
+            <button id="btn-scan-apps" class="secondary">Обновить снимок</button>
+            <input
+              id="connections-search"
+              type="search"
+              aria-label="Поиск сетевых соединений"
+              placeholder="Процесс, PID, адрес или порт…"
+            />
+            <select id="connections-protocol" aria-label="Фильтр по протоколу">
+              <option value="all">TCP и UDP</option>
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+          </div>
+          <p id="connections-status" class="muted" role="status" aria-live="polite">
+            Нажмите «Обновить снимок»
+          </p>
+          <p class="muted connections-hint">
+            Снимок TCP/UDP-сокетов по процессам, включая слушающие порты. Часть владельцев может
+            быть недоступна. По одному снимку нельзя определить инициатора соединения, keepalive или
+            активность обмена.
+          </p>
+          <p id="connections-error" class="connections-error hidden" role="alert"></p>
+          <div id="apps-list"></div>
         </section>
 
         <section id="tab-probe" class="panel">

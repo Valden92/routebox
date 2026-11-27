@@ -115,6 +115,21 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export type RoutePath = "direct" | "work" | "personal";
 export type RuleAction = RoutePath | "block";
 
+export interface NetworkSocket {
+  protocol: "tcp" | "udp";
+  state: string;
+  localAddress: string;
+  remoteAddress: string;
+}
+
+export interface NetworkApp {
+  pid: number;
+  processName: string;
+  execPath?: string;
+  connections: number;
+  sockets?: NetworkSocket[];
+}
+
 export interface AutoRoutingSettings {
   autoDetectRouting: boolean;
 }
