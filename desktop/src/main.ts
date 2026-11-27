@@ -81,6 +81,7 @@ import {
 } from "./status-ui";
 import { escapeHtml, routerModeHint, routerModeLabel, routerPriorityLabel } from "./ui-labels";
 import { saveRule } from "./rule-mutations";
+import { NetworkConnectionsView } from "./network-connections-view";
 
 const pathLabels: Record<RuleAction, string> = {
   direct: "Без VPN",
@@ -1589,39 +1590,7 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  el("#btn-scan-apps").addEventListener("click", async () => {
-    const btn = el<HTMLButtonElement>("#btn-scan-apps");
-    (btn as HTMLButtonElement).disabled = true;
-    try {
-      const apps =
-        await api<{ processName: string; connections: number; execPath?: string }[]>("/api/apps");
-      el("#apps-list").innerHTML = apps
-        .slice(0, 40)
-        .map(
-          (a) =>
-            `<li>${escapeHtml(a.processName)} (${a.connections}) <button data-app="${escapeHtml(a.processName)}" class="small">→ личный</button></li>`,
-        )
-        .join("");
-      el("#apps-list")
-        .querySelectorAll("[data-app]")
-        .forEach((b) => {
-          b.addEventListener("click", async () => {
-            await api("/api/rules", {
-              method: "POST",
-              body: JSON.stringify({
-                processName: (b as HTMLButtonElement).dataset.app,
-                path: "personal",
-              }),
-            });
-            loadRules();
-          });
-        });
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Ошибка", true);
-    } finally {
-      (btn as HTMLButtonElement).disabled = false;
-    }
-  });
+  new NetworkConnectionsView(el("#tab-apps"), showToast, () => loadRules(true));
 
   el("#form-probe").addEventListener("submit", async (e) => {
     e.preventDefault();

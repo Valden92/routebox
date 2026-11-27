@@ -699,6 +699,9 @@ ul {
 
 .rules-toolbar input,
 .rules-toolbar select,
+.connections-toolbar input,
+.connections-toolbar select,
+.connections-toolbar button,
 .rule-row select {
   height: 2.25rem;
   min-height: 0;
@@ -1082,4 +1085,131 @@ button.secondary:not(:disabled) {
   min-width: 0;
   flex-basis: 220px;
   overflow-wrap: anywhere;
+}
+
+.connections-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.connections-toolbar input {
+  flex: 1;
+  min-width: 180px;
+}
+
+.connections-hint {
+  line-height: 1.5;
+  margin-bottom: 1.2rem;
+}
+
+.connections-error {
+  color: var(--err);
+}
+
+.connection-app {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  margin-bottom: 0.65rem;
+}
+
+.connection-app > summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0.85rem;
+  cursor: pointer;
+  list-style: none;
+  border-radius: 9px;
+}
+
+.connection-app > summary::-webkit-details-marker {
+  display: none;
+}
+
+.connection-app > summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid #9aa0a6;
+  border-bottom: 1.5px solid #9aa0a6;
+  transform: rotate(-45deg);
+  margin-right: 0.2rem;
+  flex: 0 0 6px;
+}
+
+.connection-app[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.connection-app > summary:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.connection-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.connection-count {
+  color: #9aa0a6;
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.connection-body {
+  padding: 0 0.85rem 0.25rem;
+}
+
+.connection-process {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.25rem 0 0.85rem;
+}
+
+.connection-process code {
+  flex: 1 1 18rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #9aa0a6;
+  font-size: 12px;
+}
+
+.connection-sockets {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.connection-row {
+  display: grid;
+  grid-template-columns: minmax(9rem, 1fr) repeat(2, minmax(0, 1.4fr));
+  gap: 0.85rem;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.connection-protocol,
+.connection-address {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.connection-address code {
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .connection-row {
+    grid-template-columns: 1fr;
+  }
 }
