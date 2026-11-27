@@ -222,6 +222,7 @@ func (s *Server) routes() {
 		r.Get("/", s.listRules)
 		r.Post("/", s.addRule)
 		r.Post("/auto-check", s.autoCheckRule)
+		r.Post("/clear", s.clearRules)
 		r.Put("/{id}", s.updateRule)
 		r.Delete("/{id}", s.deleteRule)
 		r.Post("/suggest", s.suggestRule)

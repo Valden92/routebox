@@ -10,7 +10,7 @@ export const rulePaths = [
   { key: "direct", title: "Без VPN" },
   { key: "work", title: "Системный VPN" },
 ] as const;
-type RuleSource = (typeof ruleSources)[number]["key"];
+export type RuleSource = (typeof ruleSources)[number]["key"];
 export type RuleGroupKey = RuleSource | `${RuleSource}-${RoutePath}`;
 export interface RulesFilters {
   query: string;

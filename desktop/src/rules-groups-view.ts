@@ -4,22 +4,26 @@ import {
   rulePaths,
   ruleSources,
   type RuleGroupKey,
+  type RuleSource,
   type RulesGroups,
 } from "./rules-groups";
 
 export class RulesGroupsView {
   private readonly disclosure: RulesDisclosure;
+  private busy = false;
+  private totals: Partial<Record<RuleSource, number>> = {};
   private readonly details: HTMLDetailsElement[];
 
   constructor(
     private readonly root: HTMLElement,
     storage?: Pick<Storage, "getItem" | "setItem">,
+    private readonly onClear?: (source: RuleSource) => void,
   ) {
     this.disclosure = new RulesDisclosure(storage);
     root.innerHTML = ruleSources
       .map(
         (source) => `<details class="rules-section" data-rule-group="${source.key}">
-          <summary><span>${source.title}</span><span class="rules-group-count" data-count="${source.key}"></span></summary>
+          <summary><span>${source.title}</span><span class="rules-group-count" data-count="${source.key}"></span><button type="button" class="secondary small rules-clear" data-clear-source="${source.key}" aria-label="Очистить ${source.title.toLowerCase()}" disabled>Очистить</button></summary>
           <div class="rules-section-body">
             <p class="muted hidden" data-empty="${source.key}"></p>
             ${rulePaths
@@ -36,6 +40,13 @@ export class RulesGroupsView {
         </details>`,
       )
       .join("");
+    root.querySelectorAll<HTMLButtonElement>("[data-clear-source]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.onClear?.(button.dataset.clearSource as RuleSource);
+      });
+    });
     this.details = [...root.querySelectorAll<HTMLDetailsElement>("[data-rule-group]")];
     for (const details of this.details) {
       const key = details.dataset.ruleGroup as RuleGroupKey;
@@ -61,6 +72,7 @@ export class RulesGroupsView {
       details.open = this.disclosure.open(details.dataset.ruleGroup as RuleGroupKey);
     }
     for (const source of groups) {
+      this.totals[source.key] = source.total;
       this.count(source.key, source.matched, source.total, Boolean(filterKey));
       const empty = this.root.querySelector<HTMLElement>(`[data-empty="${source.key}"]`)!;
       empty.classList.toggle("hidden", source.matched > 0);
@@ -74,6 +86,15 @@ export class RulesGroupsView {
         renderList(list, group.rules, "Правил нет.");
       }
     }
+    this.setBusy(this.busy);
+  }
+
+  setBusy(busy: boolean) {
+    this.busy = busy;
+    this.root.querySelectorAll<HTMLButtonElement>("[data-clear-source]").forEach((button) => {
+      const source = button.dataset.clearSource as RuleSource;
+      button.disabled = busy || !this.onClear || !this.totals[source];
+    });
   }
 
   private count(key: RuleGroupKey, shown: number, total: number, filtered: boolean) {

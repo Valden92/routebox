@@ -28,6 +28,7 @@ function fixture() {
     load: vi.fn<() => Promise<RulesResponse>>().mockResolvedValue(data()),
     add: vi.fn<() => Promise<unknown>>().mockResolvedValue({}),
     remove: vi.fn<() => Promise<unknown>>().mockResolvedValue({}),
+    clear: vi.fn<() => Promise<{ deleted: number }>>().mockResolvedValue({ deleted: 2 }),
   };
   const changed = vi.fn<(view: RulesView) => void>();
   const controller = new RulesController(transport, changed);
@@ -240,5 +241,96 @@ describe("pressed button feedback", () => {
     expect(ruleMutationError(error, "remove")).toContain("Правило удалено");
     expect(ruleMutationError(new Error("offline"), "add")).toBe("offline");
     expect(ruleMutationError(null, "remove")).toBe("Не удалось изменить правило");
+  });
+});
+
+describe("bulk rule cleanup", () => {
+  it("hides the snapshot immediately, blocks competing mutations and keeps new rules", async () => {
+    const f = fixture();
+    await f.controller.refresh();
+    const request = deferred<{ deleted: number }>();
+    f.transport.clear.mockReturnValueOnce(request.promise);
+    const pending = f.controller.clear("manual", ["1", "2", "1"]);
+    expect(f.view().data!.domains).toEqual([]);
+    expect(f.view().clearing).toBe("manual");
+    expect(f.transport.clear).toHaveBeenCalledWith("manual", ["1", "2"]);
+    expect(await f.controller.clear("manual", ["1"])).toBe(false);
+    expect(await f.controller.add(rule)).toBe(false);
+    expect(await f.controller.remove("1")).toBe(false);
+    await f.controller.refresh();
+    expect(f.view().data!.domains).toEqual([]);
+    const fresh = { ...first, id: "new" };
+    f.transport.load.mockResolvedValue(data([fresh]));
+    request.resolve({ deleted: 2 });
+    expect(await pending).toBe(2);
+    expect(f.view().data!.domains).toEqual([fresh]);
+    expect(f.view().clearing).toBeNull();
+    expect(f.view().deleting).toBe(0);
+  });
+  it("rejects empty cleanup and cleanup during an individual mutation", async () => {
+    const f = fixture();
+    await f.controller.refresh();
+    expect(await f.controller.clear("auto", [])).toBe(false);
+    const request = deferred<unknown>();
+    f.transport.add.mockReturnValueOnce(request.promise);
+    const adding = f.controller.add(rule);
+    expect(await f.controller.clear("manual", ["1"])).toBe(false);
+    request.resolve({});
+    await adding;
+    f.transport.remove.mockReturnValueOnce(request.promise);
+    const removing = f.controller.remove("1");
+    expect(await f.controller.clear("manual", ["2"])).toBe(false);
+    await removing;
+    expect(f.transport.clear).not.toHaveBeenCalled();
+  });
+  it("restores rows if saving fails and reconciliation is unavailable", async () => {
+    const f = fixture();
+    await f.controller.refresh();
+    f.transport.clear.mockRejectedValueOnce(new Error("write failed"));
+    f.transport.load.mockRejectedValueOnce(new Error("offline"));
+    await expect(f.controller.clear("manual", ["1", "2"])).rejects.toThrow("write failed");
+    expect(f.view().data!.domains).toEqual([first, second]);
+    expect(f.view().clearing).toBeNull();
+  });
+  it("does not resurrect acknowledged deletion if GET fails", async () => {
+    const f = fixture();
+    await f.controller.refresh();
+    f.transport.load.mockRejectedValueOnce(new Error("offline"));
+    expect(await f.controller.clear("manual", ["1", "2"])).toBe(2);
+    expect(f.view().data!.domains).toEqual([]);
+  });
+  it("does not resurrect saved deletion after publication failure", async () => {
+    const f = fixture();
+    await f.controller.refresh();
+    f.transport.clear.mockRejectedValueOnce(new ApiError(500, "reapply_failed", "apply failed"));
+    f.transport.load.mockRejectedValueOnce(new Error("offline"));
+    await expect(f.controller.clear("manual", ["1", "2"])).rejects.toThrow("apply failed");
+    expect(f.view().data!.domains).toEqual([]);
+    expect(f.view().clearing).toBeNull();
+  });
+  it("reconciles a changed-source conflict instead of forgetting its rules", async () => {
+    const f = fixture();
+    await f.controller.refresh();
+    const changed = { ...first, source: "auto" as const };
+    f.transport.clear.mockRejectedValueOnce(new ApiError(409, "rules_changed", "changed"));
+    f.transport.load.mockResolvedValue(data([changed, second]));
+    await expect(f.controller.clear("manual", ["1", "2"])).rejects.toThrow("changed");
+    expect(f.view().data!.domains).toEqual([changed, second]);
+  });
+  it("discards a pre-cleanup poll and queues a fresh read", async () => {
+    const f = fixture();
+    await f.controller.refresh();
+    const old = deferred<RulesResponse>();
+    const request = deferred<{ deleted: number }>();
+    f.transport.load.mockReturnValueOnce(old.promise).mockResolvedValueOnce(data([]));
+    f.transport.clear.mockReturnValueOnce(request.promise);
+    const poll = f.controller.refresh();
+    const clearing = f.controller.clear("manual", ["1", "2"]);
+    request.resolve({ deleted: 2 });
+    await Promise.resolve();
+    old.resolve(data());
+    await Promise.all([poll, clearing]);
+    expect(f.view().data!.domains).toEqual([]);
+    expect(f.transport.load).toHaveBeenCalledTimes(3);
   });
 });

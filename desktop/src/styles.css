@@ -1022,3 +1022,28 @@ button.secondary:not(:disabled) {
     transition: none;
   }
 }
+
+.rules-clear {
+  flex: 0 0 auto;
+  color: #aeb7c6;
+  font-weight: 400;
+}
+
+.rules-clear:hover:not(:disabled) {
+  color: var(--err);
+  border-color: rgba(240, 113, 120, 0.55);
+}
+
+.rules-clear-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+
+@media (max-width: 480px) {
+  .rules-section > summary {
+    flex-wrap: wrap;
+  }
+}
